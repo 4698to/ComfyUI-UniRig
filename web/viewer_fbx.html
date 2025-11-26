@@ -164,10 +164,32 @@
         const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
         camera.position.set(2, 2, 2);
 
-        // Renderer
-        const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+        // Renderer with context loss handling
+        const renderer = new THREE.WebGLRenderer({
+            canvas,
+            antialias: true,
+            powerPreference: 'high-performance'
+        });
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Cap at 2x to save GPU memory
+
+        // WebGL context loss handling
+        canvas.addEventListener('webglcontextlost', (event) => {
+            console.error('[UniRig FBX Viewer] WebGL context lost!');
+            event.preventDefault();
+            loading.textContent = 'WebGL context lost. Attempting to restore...';
+            loading.style.display = 'block';
+            loading.style.color = 'orange';
+        }, false);
+
+        canvas.addEventListener('webglcontextrestored', () => {
+            console.log('[UniRig FBX Viewer] WebGL context restored');
+            loading.textContent = 'WebGL context restored. Please reload the model.';
+            loading.style.color = 'green';
+            setTimeout(() => {
+                loading.style.display = 'none';
+            }, 3000);
+        }, false);
 
         // Controls
         const controls = new OrbitControls(camera, canvas);
@@ -234,6 +256,21 @@
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Cleanup on page unload to prevent memory leaks
+        window.addEventListener('beforeunload', () => {
+            console.log('[UniRig FBX Viewer] Cleaning up resources before unload');
+            if (currentModel) {
+                disposeObject(currentModel);
+            }
+            if (skeletonHelper) {
+                disposeObject(skeletonHelper);
+            }
+            boneGizmos.forEach(gizmo => disposeObject(gizmo));
+            renderer.dispose();
+            controls.dispose();
+            transformControls.dispose();
         });
 
         // Create bone gizmos (clickable spheres at joints)
@@ -339,6 +376,37 @@
             statusEl.textContent = 'Camera reset';
         }
 
+        // Dispose of Three.js resources to free GPU memory
+        function disposeObject(obj) {
+            if (!obj) return;
+
+            if (obj.geometry) {
+                obj.geometry.dispose();
+            }
+
+            if (obj.material) {
+                if (Array.isArray(obj.material)) {
+                    obj.material.forEach(mat => {
+                        if (mat.map) mat.map.dispose();
+                        if (mat.normalMap) mat.normalMap.dispose();
+                        if (mat.roughnessMap) mat.roughnessMap.dispose();
+                        if (mat.metalnessMap) mat.metalnessMap.dispose();
+                        mat.dispose();
+                    });
+                } else {
+                    if (obj.material.map) obj.material.map.dispose();
+                    if (obj.material.normalMap) obj.material.normalMap.dispose();
+                    if (obj.material.roughnessMap) obj.material.roughnessMap.dispose();
+                    if (obj.material.metalnessMap) obj.material.metalnessMap.dispose();
+                    obj.material.dispose();
+                }
+            }
+
+            if (obj.children) {
+                obj.children.forEach(child => disposeObject(child));
+            }
+        }
+
         // Load FBX file
         function loadFBX(filepath) {
             console.log('[UniRig FBX Viewer] Loading:', filepath);
@@ -347,16 +415,22 @@
             loading.style.display = 'block';
             loading.style.color = 'white';
 
-            // Remove old model
+            // Remove old model and dispose of GPU resources
             if (currentModel) {
+                console.log('[UniRig FBX Viewer] Disposing old model');
                 scene.remove(currentModel);
+                disposeObject(currentModel);
                 currentModel = null;
             }
             if (skeletonHelper) {
                 scene.remove(skeletonHelper);
+                disposeObject(skeletonHelper);
                 skeletonHelper = null;
             }
-            boneGizmos.forEach(gizmo => scene.remove(gizmo));
+            boneGizmos.forEach(gizmo => {
+                scene.remove(gizmo);
+                disposeObject(gizmo);
+            });
             boneGizmos = [];
             bones = [];
             restPoseData = [];
@@ -720,7 +794,11 @@
             }
         });
 
+        // Notify parent that viewer is ready
         console.log('[UniRig FBX Viewer] Ready');
+        if (window.parent) {
+            window.parent.postMessage({ type: 'VIEWER_READY' }, '*');
+        }
     </script>
 </body>
 </html>

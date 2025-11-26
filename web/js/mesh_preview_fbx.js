@@ -30,6 +30,15 @@ app.registerExtension({
 
                 // Point to our FBX viewer HTML (with cache buster)
                 iframe.src = "/extensions/ComfyUI-UniRig/viewer_fbx.html?v=" + Date.now();
+                console.log('[UniRig] Setting iframe src to:', iframe.src);
+
+                // Add load event listener
+                iframe.onload = () => {
+                    console.log('[UniRig] Iframe loaded successfully');
+                };
+                iframe.onerror = (e) => {
+                    console.error('[UniRig] Iframe failed to load:', e);
+                };
 
                 // Add widget
                 const widget = this.addDOMWidget("preview", "FBX_PREVIEW", iframe, {
@@ -50,6 +59,17 @@ app.registerExtension({
 
                 // Store iframe reference
                 this.fbxViewerIframe = iframe;
+                this.fbxViewerReady = false;
+
+                // Listen for ready message from iframe
+                const onMessage = (event) => {
+                    console.log('[UniRig] Received message from iframe:', event.data);
+                    if (event.data && event.data.type === 'VIEWER_READY') {
+                        console.log('[UniRig] Viewer iframe is ready!');
+                        this.fbxViewerReady = true;
+                    }
+                };
+                window.addEventListener('message', onMessage.bind(this));
 
                 // Set initial node size (taller to accommodate controls)
                 this.setSize([512, 640]);
@@ -80,8 +100,8 @@ app.registerExtension({
                             console.log(`[UniRig] Extracted basename: ${basename}, path: ${filepath}`);
                         }
 
-                        // Send message to iframe (with delay to ensure iframe is loaded)
-                        setTimeout(() => {
+                        // Send message to iframe (wait for ready or use delay)
+                        const sendMessage = () => {
                             if (iframe.contentWindow) {
                                 console.log(`[UniRig] Sending postMessage to iframe: ${filepath}`);
                                 iframe.contentWindow.postMessage({
@@ -92,7 +112,28 @@ app.registerExtension({
                             } else {
                                 console.error("[UniRig] Iframe contentWindow not available");
                             }
-                        }, 100);
+                        };
+
+                        // Wait for iframe to be ready, or use timeout as fallback
+                        if (this.fbxViewerReady) {
+                            sendMessage();
+                        } else {
+                            const checkReady = setInterval(() => {
+                                if (this.fbxViewerReady) {
+                                    clearInterval(checkReady);
+                                    sendMessage();
+                                }
+                            }, 50);
+
+                            // Fallback timeout after 2 seconds
+                            setTimeout(() => {
+                                clearInterval(checkReady);
+                                if (!this.fbxViewerReady) {
+                                    console.warn("[UniRig] Iframe not ready after 2s, sending anyway");
+                                    sendMessage();
+                                }
+                            }, 2000);
+                        }
                     } else {
                         console.log("[UniRig] No fbx_file in message data. Keys:", Object.keys(message || {}));
                     }
