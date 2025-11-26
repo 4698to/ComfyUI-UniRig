@@ -51,7 +51,7 @@ app.registerExtension({
                 // Set widget size - allow flexible height
                 widget.computeSize = function(width) {
                     const w = width || 512;
-                    const h = w * 1.25;  // Taller than wide to accommodate controls
+                    const h = w * 1.5;  // Taller than wide to accommodate controls (increased from 1.25)
                     return [w, h];
                 };
 
@@ -72,7 +72,7 @@ app.registerExtension({
                 window.addEventListener('message', onMessage.bind(this));
 
                 // Set initial node size (taller to accommodate controls)
-                this.setSize([512, 640]);
+                this.setSize([512, 768]);
 
                 // Handle execution
                 const onExecuted = this.onExecuted;

@@ -215,6 +215,11 @@ class Exporter():
         extrude_from_parent: bool=True,
         tails: Union[ndarray, None]=None,
         blender_exe: Union[str, None]=None,
+        uv_coords: Union[ndarray, None]=None,
+        uv_faces: Union[ndarray, None]=None,
+        texture_data_base64: Union[str, None]=None,
+        texture_format: Union[str, None]=None,
+        material_name: Union[str, None]=None,
     ):
         '''
         Export skeleton to FBX using external Blender executable.
@@ -276,6 +281,11 @@ class Exporter():
             'faces': convert_to_python(faces),
             'skin': convert_to_python(skin),
             'tails': convert_to_python(tails),
+            'uv_coords': convert_to_python(uv_coords),
+            'uv_faces': convert_to_python(uv_faces),
+            'texture_data_base64': texture_data_base64 if texture_data_base64 else "",
+            'texture_format': texture_format if texture_format else "",
+            'material_name': material_name if material_name else "Material",
             'group_per_vertex': int(group_per_vertex) if isinstance(group_per_vertex, (np.integer, np.floating)) else group_per_vertex,
             'do_not_normalize': bool(do_not_normalize),
         }

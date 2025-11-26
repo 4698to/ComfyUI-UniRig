@@ -5,18 +5,19 @@
     <title>UniRig FBX Viewer</title>
     <style>
         body {
-            display: flex;
-            flex-direction: column;
-            height: 100vh;
             margin: 0;
             overflow: hidden;
             background: #2a2a2a;
             font-family: monospace;
+            width: 100%;
+            height: 100vh;
         }
         #viewerContainer {
-            flex: 1;
-            position: relative;
-            min-height: 0;
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
         }
         #canvas {
             width: 100%;
@@ -31,16 +32,24 @@
             color: white;
             font-size: 14px;
             text-align: center;
+            z-index: 10;
         }
         #controls {
-            background: #1a1a1a;
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(26, 26, 26, 0.95);
             border-top: 1px solid #444;
-            padding: 12px;
+            padding: 10px;
             color: white;
-            font-size: 12px;
+            font-size: 11px;
             display: flex;
             flex-direction: column;
-            gap: 10px;
+            gap: 8px;
+            z-index: 100;
+            max-height: 40%;
+            overflow-y: auto;
         }
         #controls button {
             background: #4a4a4a;
@@ -137,8 +146,8 @@
     <script type="importmap">
     {
         "imports": {
-            "three": "/extensions/ComfyUI-UniRig/lib/three/three.module.js",
-            "three/addons/": "/extensions/ComfyUI-UniRig/lib/three/examples/jsm/"
+            "three": "/extensions/ComfyUI-UniRig/static/three/three.module.js",
+            "three/addons/": "/extensions/ComfyUI-UniRig/static/three/examples/jsm/"
         }
     }
     </script>
@@ -461,6 +470,51 @@
                     currentModel.traverse((child) => {
                         if (child.isSkinnedMesh) {
                             console.log('[UniRig FBX Viewer] Found SkinnedMesh:', child.name);
+
+                            // DEBUG: Log material and texture information
+                            console.log('[UniRig FBX Viewer] DEBUG - Material info:');
+                            if (!child.material) {
+                                console.log('[UniRig FBX Viewer] DEBUG - No material found on mesh');
+                            } else if (Array.isArray(child.material)) {
+                                console.log('[UniRig FBX Viewer] DEBUG - Multiple materials:', child.material.length);
+                                child.material.forEach((mat, idx) => {
+                                    console.log(`[UniRig FBX Viewer] DEBUG - Material[${idx}]:`, {
+                                        type: mat.type,
+                                        color: mat.color ? mat.color.getHexString() : 'none',
+                                        map: mat.map ? `Texture(${mat.map.image?.width}x${mat.map.image?.height})` : 'none',
+                                        normalMap: mat.normalMap ? 'present' : 'none',
+                                        roughnessMap: mat.roughnessMap ? 'present' : 'none',
+                                        metalnessMap: mat.metalnessMap ? 'present' : 'none',
+                                        emissiveMap: mat.emissiveMap ? 'present' : 'none',
+                                        aoMap: mat.aoMap ? 'present' : 'none'
+                                    });
+                                });
+                            } else {
+                                const mat = child.material;
+                                console.log('[UniRig FBX Viewer] DEBUG - Single material:', {
+                                    type: mat.type,
+                                    color: mat.color ? mat.color.getHexString() : 'none',
+                                    map: mat.map ? `Texture(${mat.map.image?.width}x${mat.map.image?.height})` : 'none',
+                                    normalMap: mat.normalMap ? 'present' : 'none',
+                                    roughnessMap: mat.roughnessMap ? 'present' : 'none',
+                                    metalnessMap: mat.metalnessMap ? 'present' : 'none',
+                                    emissiveMap: mat.emissiveMap ? 'present' : 'none',
+                                    aoMap: mat.aoMap ? 'present' : 'none'
+                                });
+                            }
+
+                            // DEBUG: Check for UV attributes
+                            if (child.geometry) {
+                                const hasUV = child.geometry.attributes.uv ? true : false;
+                                const hasUV2 = child.geometry.attributes.uv2 ? true : false;
+                                console.log('[UniRig FBX Viewer] DEBUG - Geometry UV attributes:', {
+                                    hasUV: hasUV,
+                                    uvCount: hasUV ? child.geometry.attributes.uv.count : 0,
+                                    hasUV2: hasUV2,
+                                    vertexCount: child.geometry.attributes.position?.count || 0,
+                                    faceCount: child.geometry.index ? child.geometry.index.count / 3 : 0
+                                });
+                            }
 
                             // Ensure material is visible
                             if (!child.material) {

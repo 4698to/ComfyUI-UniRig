@@ -11,6 +11,10 @@ import pickle
 import numpy as np
 from mathutils import Vector
 from collections import defaultdict
+import tempfile
+import base64
+import struct
+import zlib
 
 # Get arguments after '--'
 argv = sys.argv
@@ -60,6 +64,20 @@ try:
     faces = np.array(data['faces'], dtype=np.int32) if data.get('faces') is not None else None
     skin = np.array(data['skin'], dtype=np.float32) if data.get('skin') is not None else None
     tails = np.array(data['tails'], dtype=np.float32) if data.get('tails') is not None else None
+
+    # UV data - convert to numpy if present
+    uv_coords = np.array(data['uv_coords'], dtype=np.float32) if data.get('uv_coords') is not None and len(data.get('uv_coords', [])) > 0 else None
+    uv_faces = np.array(data['uv_faces'], dtype=np.int32) if data.get('uv_faces') is not None and len(data.get('uv_faces', [])) > 0 else None
+
+    # Texture data - keep as string (base64 encoded)
+    texture_data_base64 = data.get('texture_data_base64', "")
+    texture_format = data.get('texture_format', "PNG")
+    material_name_from_data = data.get('material_name', "Material")
+
+    if texture_data_base64 and len(texture_data_base64) > 0:
+        print(f"[Blender FBX Export] Found texture data: {texture_format} ({len(texture_data_base64) // 1024}KB base64)")
+    else:
+        print(f"[Blender FBX Export] No texture data found")
 
     print(f"[Blender FBX Export] Loaded skeleton with {len(joints)} joints")
     print(f"[Blender FBX Export] Joints shape: {joints.shape}")
@@ -125,11 +143,110 @@ if vertices is not None:
     mesh.from_pydata(vertices.tolist(), [], faces.tolist() if faces is not None else [])
     mesh.update()
 
+    # Add UV coordinates if available
+    if uv_coords is not None and uv_faces is not None and len(uv_coords) > 0:
+        print(f"[Blender FBX Export] Adding UV coordinates: {len(uv_coords)} UVs for {len(uv_faces)} faces")
+        # Create UV layer
+        uv_layer = mesh.uv_layers.new(name='UVMap')
+
+        # Apply UV coordinates per face loop
+        for face_idx, poly in enumerate(mesh.polygons):
+            if face_idx < len(uv_faces):
+                for loop_offset, loop_idx in enumerate(poly.loop_indices):
+                    uv_idx = uv_faces[face_idx][loop_offset]
+                    if uv_idx < len(uv_coords):
+                        uv_layer.data[loop_idx].uv = uv_coords[uv_idx]
+
+        print(f"[Blender FBX Export] ✓ UV coordinates applied")
+    else:
+        print(f"[Blender FBX Export] No UV coordinates available")
+
     # Make object from mesh
     obj = bpy.data.objects.new('character', mesh)
 
     # Add object to scene collection
     collection.objects.link(obj)
+
+    # Create and apply textured material if texture data is available
+    if texture_data_base64 and len(texture_data_base64) > 0:
+        print(f"[Blender FBX Export] Creating textured material...")
+        try:
+            # Decode base64 PNG to raw bytes
+            png_data = base64.b64decode(texture_data_base64)
+
+            # Save PNG to temporary file (no PIL needed - already PNG format)
+            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                tmp.write(png_data)
+                tmp_texture_path = tmp.name
+
+            print(f"[Blender FBX Export] Saved texture to temp file: {tmp_texture_path}")
+            print(f"[Blender FBX Export] PNG data size: {len(png_data)} bytes")
+
+            # Create material with nodes
+            mat = bpy.data.materials.new(name=material_name_from_data)
+            mat.use_nodes = True
+
+            # Clear default nodes
+            mat.node_tree.nodes.clear()
+
+            # Create nodes
+            nodes = mat.node_tree.nodes
+            links = mat.node_tree.links
+
+            # Create image texture node
+            img_node = nodes.new(type='ShaderNodeTexImage')
+            img_node.location = (-300, 300)
+
+            # Create principled BSDF node
+            bsdf_node = nodes.new(type='ShaderNodeBsdfPrincipled')
+            bsdf_node.location = (0, 300)
+
+            # Set material to be non-metallic and fairly rough (more diffuse/matte)
+            # This prevents the shiny/translucent look when only diffuse texture is available
+            bsdf_node.inputs['Metallic'].default_value = 0.0  # Non-metallic
+            bsdf_node.inputs['Roughness'].default_value = 0.8  # Fairly rough/matte
+            bsdf_node.inputs['Specular IOR Level'].default_value = 0.3  # Reduced specular
+
+            # Create output node
+            output_node = nodes.new(type='ShaderNodeOutputMaterial')
+            output_node.location = (300, 300)
+
+            # Link nodes: Image -> BSDF -> Output
+            links.new(img_node.outputs['Color'], bsdf_node.inputs['Base Color'])
+            links.new(bsdf_node.outputs['BSDF'], output_node.inputs['Surface'])
+
+            # Load image into Blender (Blender can load PNG natively)
+            blender_image = bpy.data.images.load(tmp_texture_path)
+            img_node.image = blender_image
+
+            print(f"[Blender FBX Export] Loaded texture: {blender_image.size[0]}x{blender_image.size[1]}")
+
+            # Pack image into blend file (so it's embedded in FBX)
+            blender_image.pack()
+
+            print(f"[Blender FBX Export] Packed texture image into blend file")
+
+            # Assign material to mesh
+            obj.data.materials.append(mat)
+
+            # Assign material to all faces
+            for poly in obj.data.polygons:
+                poly.material_index = 0
+
+            print(f"[Blender FBX Export] ✓ Textured material applied: {material_name_from_data}")
+
+            # Clean up temp file
+            try:
+                os.remove(tmp_texture_path)
+            except:
+                pass
+
+        except Exception as tex_err:
+            print(f"[Blender FBX Export] Warning: Could not apply texture: {tex_err}")
+            import traceback
+            traceback.print_exc()
+    else:
+        print(f"[Blender FBX Export] No texture to apply")
 
 # Create armature
 print("[Blender FBX Export] Creating armature...")
@@ -261,8 +378,17 @@ print("[Blender FBX Export] Exporting to FBX...")
 os.makedirs(os.path.dirname(output_fbx) if os.path.dirname(output_fbx) else '.', exist_ok=True)
 
 try:
-    bpy.ops.export_scene.fbx(filepath=output_fbx, check_existing=False, add_leaf_bones=False)
+    # Export with embedded textures
+    bpy.ops.export_scene.fbx(
+        filepath=output_fbx,
+        check_existing=False,
+        add_leaf_bones=False,
+        path_mode='COPY',  # Copy textures alongside FBX
+        embed_textures=True,  # Embed textures in FBX file
+    )
     print(f"[Blender FBX Export] Saved to: {output_fbx}")
+    if texture_data_base64 and len(texture_data_base64) > 0:
+        print(f"[Blender FBX Export] ✓ Textures embedded in FBX")
     print("[Blender FBX Export] Done!")
 except Exception as e:
     print(f"[Blender FBX Export] Export failed: {e}")

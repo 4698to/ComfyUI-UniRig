@@ -339,9 +339,36 @@ class SkinWriter(BasePredictionWriter):
             if self.export_fbx is not None:
                 try:
                     exporter = Exporter()
-                    names = RawData.load(path=os.path.join(paths[id], data_names[id])).names
+                    raw_data_loaded = RawData.load(path=os.path.join(paths[id], data_names[id]))
+                    names = raw_data_loaded.names
                     if names is None:
                         names = [f"bone_{i}" for i in range(J)]
+
+                    # Try to load UV and texture data from the NPZ
+                    uv_coords = None
+                    uv_faces = None
+                    texture_data_base64 = None
+                    texture_format = None
+                    material_name = None
+                    try:
+                        npz_path = os.path.join(paths[id], data_names[id])
+                        if os.path.exists(npz_path):
+                            npz_data = np.load(npz_path, allow_pickle=True)
+                            if 'uv_coords' in npz_data and len(npz_data['uv_coords']) > 0:
+                                uv_coords = npz_data['uv_coords']
+                                uv_faces = npz_data.get('uv_faces', None)
+                                print(f"[SkinSystem] Loaded UV coordinates: {len(uv_coords)} UVs")
+                            # Load texture data if available
+                            if 'texture_data_base64' in npz_data:
+                                tex_data = npz_data['texture_data_base64']
+                                if tex_data is not None and len(str(tex_data)) > 0:
+                                    texture_data_base64 = str(tex_data)
+                                    texture_format = str(npz_data.get('texture_format', 'PNG'))
+                                    material_name = str(npz_data.get('material_name', 'Material'))
+                                    print(f"[SkinSystem] Loaded texture: {texture_format} ({len(texture_data_base64) // 1024}KB base64)")
+                    except Exception as uv_err:
+                        print(f"[SkinSystem] Could not load UV/texture data: {uv_err}")
+
                     if self.user_mode:
                         if self.output_name is not None:
                             path = self.output_name
@@ -361,6 +388,11 @@ class SkinWriter(BasePredictionWriter):
                         tails=tails[id, :J],
                         use_extrude_bone=False,
                         use_connect_unique_child=False,
+                        uv_coords=uv_coords,
+                        uv_faces=uv_faces,
+                        texture_data_base64=texture_data_base64,
+                        texture_format=texture_format,
+                        material_name=material_name,
                         # do_not_normalize=True,
                     )
                 except Exception as e:

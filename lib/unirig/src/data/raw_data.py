@@ -46,16 +46,38 @@ class RawData(Exporter):
     
     # tails of joints, shape (J, 3)
     tails: Union[ndarray, None]=None
-    
+
     # whether the joint has skin, bool
     no_skin: Union[ndarray, None]=None
-    
+
     # path to data
     path: Union[str, None]=None
-    
+
     # data cls
     cls: Union[str, None]=None
-    
+
+    # UV coordinates (per loop/corner), shape (L, 2) where L = num face loops
+    uv_coords: Union[ndarray, None]=None
+
+    # UV face indices, shape (F, 3), indices into uv_coords
+    uv_faces: Union[ndarray, None]=None
+
+    # Material name
+    material_name: Union[str, None]=None
+
+    # Texture path
+    texture_path: Union[str, None]=None
+
+    # Base64-encoded texture image data
+    texture_data_base64: Union[str, None]=None
+
+    # Texture format (PNG, JPEG, etc.)
+    texture_format: Union[str, None]=None
+
+    # Texture dimensions
+    texture_width: Union[int, None]=None
+    texture_height: Union[int, None]=None
+
     @staticmethod
     def load(path: str, origin=np.float16, to=np.float32) -> 'RawData':
         data = np.load(path, allow_pickle=True)

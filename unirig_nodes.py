@@ -17,6 +17,71 @@ import folder_paths
 import time
 import shutil
 import glob
+import base64
+from io import BytesIO
+import torch
+
+# Try to import PIL for texture handling
+try:
+    from PIL import Image as PILImage
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
+    print("[UniRig] Warning: PIL not available, texture preview will be limited")
+
+
+def decode_texture_to_comfy_image(texture_data_base64):
+    """
+    Decode base64 texture to ComfyUI IMAGE format (torch tensor).
+    Returns: (torch tensor [1, H, W, 3], width, height) or (None, 0, 0)
+    """
+    if not texture_data_base64 or not HAS_PIL:
+        return None, 0, 0
+
+    try:
+        # Decode base64
+        image_data = base64.b64decode(texture_data_base64)
+        pil_image = PILImage.open(BytesIO(image_data))
+
+        # Convert to RGB if necessary
+        if pil_image.mode == 'RGBA':
+            pil_image = pil_image.convert('RGB')
+        elif pil_image.mode != 'RGB':
+            pil_image = pil_image.convert('RGB')
+
+        # Convert to numpy array
+        img_array = np.array(pil_image).astype(np.float32) / 255.0
+
+        # Convert to torch tensor [1, H, W, 3] for ComfyUI
+        img_tensor = torch.from_numpy(img_array).unsqueeze(0)
+
+        return img_tensor, pil_image.width, pil_image.height
+
+    except Exception as e:
+        print(f"[UniRig] Error decoding texture: {e}")
+        return None, 0, 0
+
+
+def create_placeholder_texture(width=256, height=256, text="No Texture"):
+    """Create a placeholder image when no texture is available."""
+    try:
+        # Create a gray image with text
+        img_array = np.full((height, width, 3), 0.3, dtype=np.float32)
+
+        # Add a simple pattern to indicate placeholder
+        # Create a grid pattern
+        for i in range(0, height, 32):
+            img_array[i:i+2, :, :] = 0.4
+        for j in range(0, width, 32):
+            img_array[:, j:j+2, :] = 0.4
+
+        img_tensor = torch.from_numpy(img_array).unsqueeze(0)
+        return img_tensor
+
+    except Exception as e:
+        print(f"[UniRig] Error creating placeholder: {e}")
+        # Return minimal gray image
+        return torch.full((1, 64, 64, 3), 0.3)
 
 
 # Get paths relative to this file
@@ -147,8 +212,8 @@ class UniRigExtractSkeleton:
             }
         }
 
-    RETURN_TYPES = ("TRIMESH", "SKELETON")
-    RETURN_NAMES = ("normalized_mesh", "skeleton")
+    RETURN_TYPES = ("TRIMESH", "SKELETON", "IMAGE")
+    RETURN_NAMES = ("normalized_mesh", "skeleton", "texture_preview")
     FUNCTION = "extract"
     CATEGORY = "UniRig"
 
@@ -356,12 +421,38 @@ class UniRigExtractSkeleton:
             # Transform skeleton data to RawData format for skinning compatibility
             # Load the preprocessing data which contains mesh vertices/faces/normals
             preprocess_npz = os.path.join(tmpdir, "input", "raw_data.npz")
+            uv_coords = None
+            uv_faces = None
+            material_name = None
+            texture_path = None
+            texture_data_base64 = None
+            texture_format = None
+            texture_width = 0
+            texture_height = 0
             if os.path.exists(preprocess_npz):
                 preprocess_data = np.load(preprocess_npz, allow_pickle=True)
                 mesh_vertices_original = preprocess_data['vertices']
                 mesh_faces = preprocess_data['faces']
                 vertex_normals = preprocess_data.get('vertex_normals', None)
                 face_normals = preprocess_data.get('face_normals', None)
+                # Load UV coordinates if available
+                if 'uv_coords' in preprocess_data and len(preprocess_data['uv_coords']) > 0:
+                    uv_coords = preprocess_data['uv_coords']
+                    uv_faces = preprocess_data.get('uv_faces', None)
+                    print(f"[UniRigExtractSkeleton] Loaded UV coordinates: {len(uv_coords)} UVs")
+                if 'material_name' in preprocess_data:
+                    material_name = str(preprocess_data['material_name'])
+                if 'texture_path' in preprocess_data:
+                    texture_path = str(preprocess_data['texture_path'])
+                # Load texture data if available
+                if 'texture_data_base64' in preprocess_data:
+                    tex_data = preprocess_data['texture_data_base64']
+                    if tex_data is not None and len(str(tex_data)) > 0:
+                        texture_data_base64 = str(tex_data)
+                        texture_format = str(preprocess_data.get('texture_format', 'PNG'))
+                        texture_width = int(preprocess_data.get('texture_width', 0))
+                        texture_height = int(preprocess_data.get('texture_height', 0))
+                        print(f"[UniRigExtractSkeleton] Loaded texture: {texture_width}x{texture_height} {texture_format} ({len(texture_data_base64) // 1024}KB base64)")
             else:
                 # Fallback: use trimesh data
                 mesh_vertices_original = np.array(trimesh.vertices, dtype=np.float32)
@@ -466,6 +557,11 @@ class UniRigExtractSkeleton:
                 tails=tails,
                 parents=np.array(parents_list, dtype=object),  # Use object dtype to allow None values
                 names=np.array(names_list, dtype=object),
+                # UV coordinates (preserved from decimation)
+                uv_coords=uv_coords if uv_coords is not None else np.array([], dtype=np.float32),
+                uv_faces=uv_faces if uv_faces is not None else np.array([], dtype=np.int32),
+                material_name=material_name if material_name else "",
+                texture_path=texture_path if texture_path else "",
                 # Mesh bounds for denormalization
                 mesh_bounds_min=mesh_bounds_min,
                 mesh_bounds_max=mesh_bounds_max,
@@ -511,6 +607,18 @@ class UniRigExtractSkeleton:
                 "mesh_vertex_normals": vertex_normals,
                 "mesh_face_normals": face_normals,
 
+                # UV/texture data (preserved from original mesh)
+                "uv_coords": uv_coords,
+                "uv_faces": uv_faces,
+                "material_name": material_name,
+                "texture_path": texture_path,
+
+                # Texture image data (base64 encoded)
+                "texture_data_base64": texture_data_base64,
+                "texture_format": texture_format,
+                "texture_width": texture_width,
+                "texture_height": texture_height,
+
                 # Normalization metadata
                 "mesh_bounds_min": mesh_bounds_min,
                 "mesh_bounds_max": mesh_bounds_max,
@@ -530,10 +638,23 @@ class UniRigExtractSkeleton:
             print(f"[UniRigExtractSkeleton] Included hierarchy: {len(names_list)} bones with parent relationships")
             print(f"[UniRigExtractSkeleton] Skeleton dict contains all data (no NPZ loading needed)")
 
+            # Create texture preview output
+            texture_preview = None
+            if texture_data_base64:
+                texture_preview, tex_w, tex_h = decode_texture_to_comfy_image(texture_data_base64)
+                if texture_preview is not None:
+                    print(f"[UniRigExtractSkeleton] ✓ Texture preview created: {tex_w}x{tex_h}")
+                else:
+                    print(f"[UniRigExtractSkeleton] Warning: Could not decode texture for preview")
+                    texture_preview = create_placeholder_texture()
+            else:
+                print(f"[UniRigExtractSkeleton] No texture available for preview")
+                texture_preview = create_placeholder_texture()
+
             total_time = time.time() - total_start
             print(f"[UniRigExtractSkeleton] ✓✓✓ Skeleton extraction complete! ✓✓✓")
             print(f"[UniRigExtractSkeleton] ⏱️  TOTAL TIME: {total_time:.2f}s")
-            return (normalized_mesh, skeleton)
+            return (normalized_mesh, skeleton, texture_preview)
 
     def _extract_bones_from_fbx(self, fbx_mesh):
         """
@@ -1807,7 +1928,8 @@ class UniRigApplySkinningML:
             }
         }
 
-    RETURN_TYPES = ("RIGGED_MESH",)
+    RETURN_TYPES = ("RIGGED_MESH", "IMAGE")
+    RETURN_NAMES = ("rigged_mesh", "texture_preview")
     FUNCTION = "apply_skinning"
     CATEGORY = "UniRig"
 
@@ -1845,6 +1967,30 @@ class UniRigApplySkinningML:
         save_data['matrix_local'] = skeleton.get('matrix_local')
         save_data['path'] = None
         save_data['cls'] = skeleton.get('cls')
+
+        # Add UV data if available
+        if skeleton.get('uv_coords') is not None:
+            save_data['uv_coords'] = skeleton['uv_coords']
+            save_data['uv_faces'] = skeleton.get('uv_faces')
+            print(f"[UniRigApplySkinningML] UV data included: {len(skeleton['uv_coords'])} UVs")
+        else:
+            save_data['uv_coords'] = np.array([], dtype=np.float32)
+            save_data['uv_faces'] = np.array([], dtype=np.int32)
+
+        # Add texture data if available
+        if skeleton.get('texture_data_base64') is not None:
+            save_data['texture_data_base64'] = skeleton['texture_data_base64']
+            save_data['texture_format'] = skeleton.get('texture_format', 'PNG')
+            save_data['texture_width'] = skeleton.get('texture_width', 0)
+            save_data['texture_height'] = skeleton.get('texture_height', 0)
+            save_data['material_name'] = skeleton.get('material_name', '')
+            print(f"[UniRigApplySkinningML] Texture data included: {skeleton['texture_width']}x{skeleton['texture_height']} {skeleton['texture_format']}")
+        else:
+            save_data['texture_data_base64'] = ""
+            save_data['texture_format'] = ""
+            save_data['texture_width'] = 0
+            save_data['texture_height'] = 0
+            save_data['material_name'] = skeleton.get('material_name', '')
 
         np.savez(predict_skeleton_path, **save_data)
         print(f"[UniRigApplySkinningML] Prepared skeleton NPZ: {predict_skeleton_path}")
@@ -1940,9 +2086,22 @@ class UniRigApplySkinningML:
             "has_skeleton": True,
         }
 
+        # Create texture preview output
+        texture_preview = None
+        if skeleton.get('texture_data_base64'):
+            texture_preview, tex_w, tex_h = decode_texture_to_comfy_image(skeleton['texture_data_base64'])
+            if texture_preview is not None:
+                print(f"[UniRigApplySkinningML] ✓ Texture preview created: {tex_w}x{tex_h}")
+            else:
+                print(f"[UniRigApplySkinningML] Warning: Could not decode texture for preview")
+                texture_preview = create_placeholder_texture()
+        else:
+            print(f"[UniRigApplySkinningML] No texture available for preview")
+            texture_preview = create_placeholder_texture()
+
         print(f"[UniRigApplySkinningML] ✓✓✓ Skinning application complete! ✓✓✓")
 
-        return (rigged_mesh,)
+        return (rigged_mesh, texture_preview)
 
 
 NODE_CLASS_MAPPINGS = {
