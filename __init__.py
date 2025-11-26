@@ -64,16 +64,6 @@ if 'pytest' not in sys.modules:
                 bone_transforms = data.get('bone_transforms', {})
                 custom_output_filename = data.get('output_filename')
 
-                print(f"[UniRig Export API] DEBUG: Received request for FBX export")
-                print(f"[UniRig Export API] DEBUG: Source FBX: {fbx_filename}")
-                print(f"[UniRig Export API] DEBUG: Number of bone transforms: {len(bone_transforms)}")
-
-                # Print first 3 bone transforms
-                bone_names = list(bone_transforms.keys())[:3]
-                print(f"[UniRig Export API] DEBUG: Sample bone transforms:")
-                for name in bone_names:
-                    print(f"[UniRig Export API] DEBUG:   {name}: {bone_transforms[name]}")
-
                 if not fbx_filename:
                     return web.json_response({'error': 'Missing fbx_filename'}, status=400)
 
@@ -83,10 +73,6 @@ if 'pytest' not in sys.modules:
 
                 if not os.path.exists(fbx_path):
                     return web.json_response({'error': f'FBX file not found: {fbx_filename}'}, status=404)
-
-                file_size = os.path.getsize(fbx_path)
-                print(f"[UniRig Export API] DEBUG: Source FBX path: {fbx_path}")
-                print(f"[UniRig Export API] DEBUG: Source FBX size: {file_size / 1024:.2f} KB")
 
                 # Save bone transforms to temporary JSON file
                 temp_dir = folder_paths.get_temp_directory()
@@ -129,22 +115,14 @@ if 'pytest' not in sys.modules:
                 ]
 
                 # Run Blender
-                print(f"[UniRig Export API] Running Blender to export posed FBX...")
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=BLENDER_TIMEOUT)
-
-                # Print Blender output for debugging
-                print(f"[UniRig Export API] ===== BLENDER STDOUT =====")
-                print(result.stdout)
-                print(f"[UniRig Export API] ===== BLENDER STDERR =====")
-                print(result.stderr)
-                print(f"[UniRig Export API] ===== END BLENDER OUTPUT =====")
 
                 # Clean up temporary JSON file
                 if os.path.exists(transforms_json_path):
                     os.unlink(transforms_json_path)
 
                 if result.returncode != 0:
-                    print(f"[UniRig Export API] Blender stderr: {result.stderr}")
+                    print(f"[UniRig Export API] Blender export failed: {result.stderr}")
                     return web.json_response({'error': f'Blender export failed: {result.stderr}'}, status=500)
 
                 if not os.path.exists(output_fbx_path):

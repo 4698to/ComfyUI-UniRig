@@ -17,7 +17,6 @@ from .model_loaders import UniRigLoadSkeletonModel, UniRigLoadSkinningModel
 from .skeleton_extraction import UniRigExtractSkeletonNew
 from .skeleton_io import (
     UniRigSaveSkeleton,
-    UniRigSaveRiggedMesh,
     UniRigLoadRiggedMesh,
     UniRigPreviewRiggedMesh,
     UniRigExportPosedFBX,
@@ -35,7 +34,6 @@ NODE_CLASS_MAPPINGS = {
     "UniRigLoadSkinningModel": UniRigLoadSkinningModel,
     "UniRigExtractSkeletonNew": UniRigExtractSkeletonNew,
     "UniRigSaveSkeleton": UniRigSaveSkeleton,
-    "UniRigSaveRiggedMesh": UniRigSaveRiggedMesh,
     "UniRigLoadRiggedMesh": UniRigLoadRiggedMesh,
     "UniRigPreviewRiggedMesh": UniRigPreviewRiggedMesh,
     "UniRigExportPosedFBX": UniRigExportPosedFBX,
@@ -52,7 +50,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "UniRigLoadSkinningModel": "UniRig: Load Skinning Model",
     "UniRigExtractSkeletonNew": "UniRig: Extract Skeleton",
     "UniRigSaveSkeleton": "UniRig: Save Skeleton",
-    "UniRigSaveRiggedMesh": "UniRig: Save Rigged Mesh",
     "UniRigLoadRiggedMesh": "UniRig: Load Rigged Mesh",
     "UniRigPreviewRiggedMesh": "UniRig: Preview Rigged Mesh",
     "UniRigExportPosedFBX": "UniRig: Export Posed FBX",

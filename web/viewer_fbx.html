@@ -1085,87 +1085,56 @@
                 // Capture current bone transforms
                 const boneTransforms = {};
 
-                console.log('[UniRig FBX Viewer] DEBUG: Current model info:');
-                console.log('[UniRig FBX Viewer] DEBUG: Model position:', currentModel.position);
-                console.log('[UniRig FBX Viewer] DEBUG: Model rotation:', currentModel.rotation);
-                console.log('[UniRig FBX Viewer] DEBUG: Model scale:', currentModel.scale);
-
                 // Compute DELTA transforms (current - rest) for each bone
                 // Blender's pose_bone.location is an OFFSET from rest, not absolute position
                 // So we need to send deltas, not absolute transforms
 
-                console.log('[UniRig FBX Viewer] DEBUG: Computing deltas...');
-                console.log('[UniRig FBX Viewer] DEBUG: Rest pose data length:', restPoseData.length);
-                console.log('[UniRig FBX Viewer] DEBUG: Bones length:', bones.length);
+                // Update all matrices before reading transforms
+                currentModel.updateMatrixWorld(true);
 
-                // Create bone index mapping for fast lookup
-                const boneToIndex = new Map();
-                bones.forEach((bone, index) => {
-                    boneToIndex.set(bone, index);
-                });
-
-                let debugCount = 0;
-                currentModel.traverse((child) => {
-                    if (child.isBone) {
-                        // Find this bone's rest pose data
-                        const boneIndex = boneToIndex.get(child);
-                        if (boneIndex === undefined || !restPoseData[boneIndex]) {
-                            console.warn(`[UniRig FBX Viewer] No rest pose data for bone: ${child.name}`);
-                            return;
-                        }
-
-                        const rest = restPoseData[boneIndex];
-
-                        // Debug: print first 3 bones current vs rest
-                        if (debugCount < 3) {
-                            console.log(`[UniRig FBX Viewer] DEBUG: Bone ${child.name}:`);
-                            console.log('  Current:', { pos: child.position, quat: child.quaternion });
-                            console.log('  Rest:', { pos: rest.position, quat: rest.quaternion });
-                            debugCount++;
-                        }
-
-                        // Compute position delta: current - rest
-                        const posDelta = new THREE.Vector3().subVectors(child.position, rest.position);
-
-                        // Compute rotation delta: current * rest.inverse()
-                        const quatDelta = child.quaternion.clone().multiply(rest.quaternion.clone().invert());
-
-                        // Compute scale delta: current / rest (component-wise)
-                        const scaleDelta = new THREE.Vector3(
-                            child.scale.x / rest.scale.x,
-                            child.scale.y / rest.scale.y,
-                            child.scale.z / rest.scale.z
-                        );
-
-                        boneTransforms[child.name] = {
-                            position: {
-                                x: posDelta.x,
-                                y: posDelta.y,
-                                z: posDelta.z
-                            },
-                            quaternion: {
-                                x: quatDelta.x,
-                                y: quatDelta.y,
-                                z: quatDelta.z,
-                                w: quatDelta.w
-                            },
-                            scale: {
-                                x: scaleDelta.x,
-                                y: scaleDelta.y,
-                                z: scaleDelta.z
-                            }
-                        };
+                // Iterate directly through bones array (these are the actual skeleton bones being manipulated)
+                bones.forEach((bone, boneIndex) => {
+                    if (!restPoseData[boneIndex]) {
+                        console.warn(`[UniRig FBX Viewer] No rest pose data for bone index ${boneIndex}: ${bone.name}`);
+                        return;
                     }
+
+                    const rest = restPoseData[boneIndex];
+
+                    // Compute position delta: current - rest
+                    const posDelta = new THREE.Vector3().subVectors(bone.position, rest.position);
+
+                    // Compute rotation delta: current * rest.inverse()
+                    const quatDelta = bone.quaternion.clone().multiply(rest.quaternion.clone().invert());
+
+                    // Compute scale delta: current / rest (component-wise)
+                    const scaleDelta = new THREE.Vector3(
+                        bone.scale.x / rest.scale.x,
+                        bone.scale.y / rest.scale.y,
+                        bone.scale.z / rest.scale.z
+                    );
+
+                    boneTransforms[bone.name] = {
+                        position: {
+                            x: posDelta.x,
+                            y: posDelta.y,
+                            z: posDelta.z
+                        },
+                        quaternion: {
+                            x: quatDelta.x,
+                            y: quatDelta.y,
+                            z: quatDelta.z,
+                            w: quatDelta.w
+                        },
+                        scale: {
+                            x: scaleDelta.x,
+                            y: scaleDelta.y,
+                            z: scaleDelta.z
+                        }
+                    };
                 });
 
-                console.log('[UniRig FBX Viewer] Captured DELTA transforms (current - rest) for', Object.keys(boneTransforms).length, 'bones');
-
-                // Print first 3 bone transforms for debugging
-                const boneNames = Object.keys(boneTransforms).slice(0, 3);
-                console.log('[UniRig FBX Viewer] DEBUG: Sample bone delta transforms:');
-                boneNames.forEach(name => {
-                    console.log(`[UniRig FBX Viewer] DEBUG: Bone "${name}":`, boneTransforms[name]);
-                });
+                console.log(`[UniRig FBX Viewer] Captured ${Object.keys(boneTransforms).length} bone transforms`);
 
                 // Send to backend API
                 const response = await fetch('/unirig/export_posed_fbx', {

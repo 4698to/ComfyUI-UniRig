@@ -197,65 +197,6 @@ class UniRigSaveSkeleton:
                 os.unlink(pickle_path)
 
 
-class UniRigSaveRiggedMesh:
-    """
-    Save rigged mesh (with skeleton and skinning weights) to file.
-
-    Supports FBX and GLB formats for animation software.
-    """
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "rigged_mesh": ("RIGGED_MESH",),
-                "filename": ("STRING", {"default": "rigged_mesh.fbx"}),
-                "format": (["fbx", "glb"], {"default": "fbx"}),
-            }
-        }
-
-    RETURN_TYPES = ()
-    FUNCTION = "save"
-    OUTPUT_NODE = True
-    CATEGORY = "UniRig"
-
-    def save(self, rigged_mesh, filename, format):
-        """Save rigged mesh to file."""
-        print(f"[UniRigSaveRiggedMesh] Saving rigged mesh to {filename} as {format.upper()}...")
-
-        output_dir = folder_paths.get_output_directory()
-        filepath = os.path.join(output_dir, filename)
-
-        if not filepath.endswith(f'.{format}'):
-            filepath = os.path.splitext(filepath)[0] + f'.{format}'
-
-        source_fbx = rigged_mesh.get("fbx_path")
-        if not source_fbx or not os.path.exists(source_fbx):
-            raise RuntimeError(f"Rigged mesh FBX not found: {source_fbx}")
-
-        if format == "fbx":
-            shutil.copy(source_fbx, filepath)
-            print(f"[UniRigSaveRiggedMesh] Saved FBX to: {filepath}")
-        elif format == "glb":
-            print(f"[UniRigSaveRiggedMesh] Converting FBX to GLB...")
-            try:
-                import trimesh
-                scene = trimesh.load(source_fbx)
-                scene.export(filepath)
-                print(f"[UniRigSaveRiggedMesh] Saved GLB to: {filepath}")
-            except Exception as e:
-                print(f"[UniRigSaveRiggedMesh] Warning: GLB conversion failed, saving as FBX: {e}")
-                shutil.copy(source_fbx, filepath.replace('.glb', '.fbx'))
-                filepath = filepath.replace('.glb', '.fbx')
-                print(f"[UniRigSaveRiggedMesh] Saved FBX to: {filepath}")
-
-        file_size = os.path.getsize(filepath)
-        print(f"[UniRigSaveRiggedMesh] File size: {file_size / 1024:.2f} KB")
-        print(f"[UniRigSaveRiggedMesh] Has skinning: {rigged_mesh.get('has_skinning', False)}")
-        print(f"[UniRigSaveRiggedMesh] Has skeleton: {rigged_mesh.get('has_skeleton', False)}")
-
-        return {}
-
 
 class UniRigLoadRiggedMesh:
     """
@@ -282,8 +223,8 @@ class UniRigLoadRiggedMesh:
             },
         }
 
-    RETURN_TYPES = ("RIGGED_MESH", "STRING")
-    RETURN_NAMES = ("rigged_mesh", "info")
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("fbx_output_path", "info")
     FUNCTION = "load"
     CATEGORY = "unirig"
 
@@ -318,7 +259,7 @@ class UniRigLoadRiggedMesh:
         return sorted(fbx_files)
 
     def load(self, source_folder, fbx_file):
-        """Load an FBX file and return it as a RIGGED_MESH."""
+        """Load an FBX file and return its filename in output directory."""
         print(f"[UniRigLoadRiggedMesh] Loading FBX file: {fbx_file} from {source_folder}")
 
         if fbx_file == "No FBX files found":
@@ -335,14 +276,22 @@ class UniRigLoadRiggedMesh:
         if not os.path.exists(fbx_path):
             raise RuntimeError(f"FBX file not found: {fbx_path}")
 
-        # Copy to temp directory
+        # If loading from input, copy to output directory
+        output_dir = folder_paths.get_output_directory()
+        if source_folder == "input":
+            # Create output filename with timestamp to avoid conflicts
+            output_filename = f"loaded_{int(time.time())}_{os.path.basename(fbx_file)}"
+            output_path = os.path.join(output_dir, output_filename)
+            shutil.copy(fbx_path, output_path)
+            print(f"[UniRigLoadRiggedMesh] Copied from input to output: {output_filename}")
+        else:
+            # Already in output, use as-is
+            output_filename = fbx_file
+            output_path = fbx_path
+            print(f"[UniRigLoadRiggedMesh] Using existing file from output: {output_filename}")
+
+        # Extract mesh info with Blender (using original path for analysis)
         temp_dir = folder_paths.get_temp_directory()
-        temp_fbx = os.path.join(temp_dir, f"loaded_rigged_{int(time.time())}_{os.path.basename(fbx_file)}")
-        shutil.copy(fbx_path, temp_fbx)
-
-        print(f"[UniRigLoadRiggedMesh] Copied to temp: {temp_fbx}")
-
-        # Extract mesh info with Blender
         mesh_info = {}
         try:
             blender_exe = os.environ.get('UNIRIG_BLENDER_EXECUTABLE', BLENDER_EXE)
@@ -452,16 +401,8 @@ class UniRigLoadRiggedMesh:
             print(f"[UniRigLoadRiggedMesh] Could not parse skeleton: {e}")
             skeleton_info = {"has_skeleton": "unknown", "error": str(e)}
 
-        # Create rigged mesh structure
-        rigged_mesh = {
-            "mesh": None,
-            "fbx_path": temp_fbx,
-            "has_skinning": skeleton_info.get("has_skeleton", False),
-            "has_skeleton": skeleton_info.get("has_skeleton", False),
-        }
-
         # Create info string
-        file_size = os.path.getsize(fbx_path)
+        file_size = os.path.getsize(output_path)
         info_lines = [
             f"File: {os.path.basename(fbx_file)}",
             f"Size: {file_size / 1024:.1f} KB",
@@ -503,7 +444,7 @@ class UniRigLoadRiggedMesh:
         print(f"[UniRigLoadRiggedMesh] Loaded successfully")
         print(info_string)
 
-        return (rigged_mesh, info_string)
+        return (output_filename, info_string)
 
 
 class UniRigPreviewRiggedMesh:
@@ -518,7 +459,9 @@ class UniRigPreviewRiggedMesh:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "rigged_mesh": ("RIGGED_MESH",),
+                "fbx_output_path": ("STRING", {
+                    "tooltip": "FBX filename from output directory (from UniRigApplySkinningMLNew or UniRigLoadRiggedMesh)"
+                }),
             },
         }
 
@@ -527,33 +470,30 @@ class UniRigPreviewRiggedMesh:
     FUNCTION = "preview"
     CATEGORY = "unirig"
 
-    def preview(self, rigged_mesh):
+    def preview(self, fbx_output_path):
         """Preview the rigged mesh in an interactive FBX viewer."""
         print(f"[UniRigPreviewRiggedMesh] Preparing preview...")
 
-        fbx_path = rigged_mesh.get("fbx_path")
-        if not fbx_path or not os.path.exists(fbx_path):
-            raise RuntimeError(f"Rigged mesh FBX not found: {fbx_path}")
+        # FBX should already be in output directory
+        output_dir = folder_paths.get_output_directory()
+        fbx_path = os.path.join(output_dir, fbx_output_path)
+
+        if not os.path.exists(fbx_path):
+            raise RuntimeError(f"FBX file not found in output directory: {fbx_output_path}")
 
         print(f"[UniRigPreviewRiggedMesh] FBX path: {fbx_path}")
 
-        # Copy FBX to output directory
-        output_dir = folder_paths.get_output_directory()
-        filename = f"rigged_preview_{int(time.time())}.fbx"
-        output_fbx_path = os.path.join(output_dir, filename)
-
-        shutil.copy2(fbx_path, output_fbx_path)
-        print(f"[UniRigPreviewRiggedMesh] Copied FBX to output: {output_fbx_path}")
-
-        has_skinning = rigged_mesh.get("has_skinning", False)
-        has_skeleton = rigged_mesh.get("has_skeleton", False)
+        # FBX is already in output, so viewer can access it directly
+        # Assume all FBX files have skinning and skeleton
+        has_skinning = True
+        has_skeleton = True
 
         print(f"[UniRigPreviewRiggedMesh] Has skinning: {has_skinning}")
         print(f"[UniRigPreviewRiggedMesh] Has skeleton: {has_skeleton}")
 
         return {
             "ui": {
-                "fbx_file": [filename],
+                "fbx_file": [fbx_output_path],
                 "has_skinning": [bool(has_skinning)],
                 "has_skeleton": [bool(has_skeleton)],
             }

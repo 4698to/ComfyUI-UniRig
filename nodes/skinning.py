@@ -86,6 +86,10 @@ class UniRigApplySkinningMLNew:
                 }),
             },
             "optional": {
+                "fbx_name": ("STRING", {
+                    "default": "",
+                    "tooltip": "Custom filename for saved FBX (without extension). If empty, uses rigged_<timestamp>.fbx"
+                }),
                 "voxel_grid_size": ("INT", {
                     "default": 196,
                     "min": 64,
@@ -117,13 +121,13 @@ class UniRigApplySkinningMLNew:
             }
         }
 
-    RETURN_TYPES = ("RIGGED_MESH", "IMAGE")
-    RETURN_NAMES = ("rigged_mesh", "texture_preview")
+    RETURN_TYPES = ("STRING", "IMAGE")
+    RETURN_NAMES = ("fbx_output_path", "texture_preview")
     FUNCTION = "apply_skinning"
     CATEGORY = "UniRig"
 
     def apply_skinning(self, normalized_mesh, skeleton, skinning_model,
-                       voxel_grid_size=None, num_samples=None, vertex_samples=None,
+                       fbx_name=None, voxel_grid_size=None, num_samples=None, vertex_samples=None,
                        voxel_mask_power=None):
         print(f"[UniRigApplySkinningMLNew] Starting ML skinning (cached model only)...")
 
@@ -203,37 +207,11 @@ class UniRigApplySkinningMLNew:
         np.savez(predict_skeleton_path, **save_data)
         print(f"[UniRigApplySkinningMLNew] Prepared skeleton NPZ: {predict_skeleton_path}")
 
-        # DEBUG: Show what we're sending to ML
-        print(f"[UniRigApplySkinningMLNew] DEBUG - NPZ joints bounds: {save_data['joints'].min(axis=0)} to {save_data['joints'].max(axis=0)}")
-        print(f"[UniRigApplySkinningMLNew] DEBUG - NPZ tails bounds: {save_data['tails'].min(axis=0)} to {save_data['tails'].max(axis=0)}")
-        if 'vertices' in save_data and save_data['vertices'] is not None:
-            print(f"[UniRigApplySkinningMLNew] DEBUG - NPZ mesh vertices bounds: {np.array(save_data['vertices']).min(axis=0)} to {np.array(save_data['vertices']).max(axis=0)}")
-
-        # DIAGNOSTIC: Compute checksums and shapes for all data
-        import hashlib
-        print(f"[UniRigApplySkinningMLNew] ===== DATA DIAGNOSTIC =====")
-        for key, value in save_data.items():
-            if value is not None and hasattr(value, '__len__'):
-                if isinstance(value, np.ndarray):
-                    checksum = hashlib.md5(value.tobytes()).hexdigest()[:8]
-                    print(f"[UniRigApplySkinningMLNew]   {key}: shape={value.shape}, dtype={value.dtype}, checksum={checksum}")
-                    # Add min/max/mean for numerical arrays
-                    if value.size > 0 and np.issubdtype(value.dtype, np.number):
-                        print(f"[UniRigApplySkinningMLNew]     → min={np.min(value):.8f}, max={np.max(value):.8f}, mean={np.mean(value):.8f}")
-                elif isinstance(value, (list, tuple)):
-                    print(f"[UniRigApplySkinningMLNew]   {key}: len={len(value)}, type={type(value).__name__}")
-                else:
-                    print(f"[UniRigApplySkinningMLNew]   {key}: type={type(value).__name__}, value={str(value)[:50]}")
-            else:
-                print(f"[UniRigApplySkinningMLNew]   {key}: {value}")
-        print(f"[UniRigApplySkinningMLNew] ==========================")
-
         # Export mesh to GLB
         input_glb = os.path.join(temp_dir, "input.glb")
 
         normalized_mesh.export(input_glb)
         print(f"[UniRigApplySkinningMLNew] Exported mesh: {normalized_mesh.vertices.shape[0]} vertices, {normalized_mesh.faces.shape[0]} faces")
-        print(f"[UniRigApplySkinningMLNew] DEBUG - GLB mesh bounds: {normalized_mesh.vertices.min(axis=0)} to {normalized_mesh.vertices.max(axis=0)}")
 
         # Run skinning inference with CACHED MODEL ONLY
         step_start = time.time()
@@ -274,15 +252,6 @@ class UniRigApplySkinningMLNew:
             "data_name": "predict_skeleton.npz",
             "config_overrides": config_overrides,
         }
-
-        # DIAGNOSTIC: Log request parameters
-        print(f"[UniRigApplySkinningMLNew] ===== REQUEST DIAGNOSTIC =====")
-        for key, value in request_data.items():
-            if key != "config_overrides":
-                print(f"[UniRigApplySkinningMLNew]   {key}: {value}")
-            else:
-                print(f"[UniRigApplySkinningMLNew]   config_overrides: {value}")
-        print(f"[UniRigApplySkinningMLNew] ==============================")
 
         try:
             result = model_cache.run_inference(cache_key, request_data)
@@ -337,12 +306,25 @@ class UniRigApplySkinningMLNew:
         print(f"[UniRigApplySkinningMLNew] Found output FBX: {fbx_path}")
         print(f"[UniRigApplySkinningMLNew] FBX file size: {os.path.getsize(fbx_path)} bytes")
 
-        # Create rigged mesh dict
-        rigged_mesh = {
-            "fbx_path": fbx_path,
-            "has_skinning": True,
-            "has_skeleton": True,
-        }
+        # Auto-save FBX to output directory
+        output_dir = folder_paths.get_output_directory()
+
+        # Determine output filename
+        if fbx_name and fbx_name.strip():
+            # Use custom name from user
+            output_filename = fbx_name.strip()
+            # Ensure .fbx extension
+            if not output_filename.lower().endswith('.fbx'):
+                output_filename = output_filename + '.fbx'
+        else:
+            # Use auto-generated name with timestamp
+            output_filename = f"rigged_{int(time.time())}.fbx"
+
+        output_path = os.path.join(output_dir, output_filename)
+        shutil.copy(fbx_path, output_path)
+
+        print(f"[UniRigApplySkinningMLNew] Auto-saved FBX to output: {output_filename}")
+        print(f"[UniRigApplySkinningMLNew] Full path: {output_path}")
 
         # Create texture preview output
         texture_preview = None
@@ -359,4 +341,4 @@ class UniRigApplySkinningMLNew:
 
         print(f"[UniRigApplySkinningMLNew] Skinning application complete!")
 
-        return (rigged_mesh, texture_preview)
+        return (output_filename, texture_preview)
