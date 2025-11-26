@@ -159,7 +159,7 @@ def install_spconv(cuda_suffix):
     return True
 
 def install_flash_attn():
-    """Try to install flash-attn (optional, can be tricky)."""
+    """Install flash-attn from official prebuilt wheels."""
     # Check if already installed
     try:
         import flash_attn
@@ -168,22 +168,60 @@ def install_flash_attn():
     except ImportError:
         pass
 
-    print("[UniRig Install] Attempting to install flash-attn (optional)...")
-    print("[UniRig Install] Note: This may take a while and requires compilation...")
+    print("[UniRig Install] Installing flash-attn from official prebuilt wheel...")
+
+    # Get PyTorch and CUDA info
+    try:
+        import torch
+        torch_version = torch.__version__.split('+')[0]  # e.g., "2.8.0"
+        torch_major_minor = '.'.join(torch_version.split('.')[:2])  # e.g., "2.8"
+
+        if not torch.cuda.is_available():
+            print("[UniRig Install] CUDA not available, skipping flash-attn (GPU-only)")
+            return True
+
+        cuda_version = torch.version.cuda  # e.g., "12.8"
+        cuda_major = cuda_version.split('.')[0] if cuda_version else None
+
+        if not cuda_major:
+            print("[UniRig Install] Could not detect CUDA version, skipping flash-attn")
+            return True
+
+    except ImportError:
+        print("[UniRig Install] PyTorch not found, skipping flash-attn")
+        return True
+
+    # Construct the official wheel URL
+    # Format: flash_attn-2.8.3+cu12torch2.8cxx11abiTRUE-cp310-cp310-linux_x86_64.whl
+    flash_attn_version = "2.8.3"  # Latest version as of installation
+    python_version = f"cp{sys.version_info.major}{sys.version_info.minor}"
+
+    wheel_url = (
+        f"https://github.com/Dao-AILab/flash-attention/releases/download/"
+        f"v{flash_attn_version}/flash_attn-{flash_attn_version}%2Bcu{cuda_major}"
+        f"torch{torch_major_minor}cxx11abiTRUE-{python_version}-{python_version}-linux_x86_64.whl"
+    )
+
+    print(f"[UniRig Install] Detected PyTorch {torch_version}, CUDA {cuda_version}, Python {python_version}")
+    print(f"[UniRig Install] Downloading from: {wheel_url}")
 
     cmd = [
         sys.executable, "-m", "pip", "install",
-        "flash-attn", "--no-build-isolation"
+        wheel_url
     ]
 
     try:
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=600)
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=300)
         print("[UniRig Install] ✓ flash-attn installed successfully")
         return True
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-        print("[UniRig Install] ✗ flash-attn installation failed or timed out")
+    except subprocess.CalledProcessError as e:
+        print("[UniRig Install] ✗ flash-attn installation failed")
         print("[UniRig Install] Note: flash-attn is optional but recommended for performance.")
-        print("[UniRig Install] For manual installation, see https://github.com/Dao-AILab/flash-attention")
+        print("[UniRig Install] You may need to install manually from:")
+        print(f"[UniRig Install]   https://github.com/Dao-AILab/flash-attention/releases")
+        return True  # Don't fail - it's optional
+    except subprocess.TimeoutExpired:
+        print("[UniRig Install] ✗ flash-attn installation timed out")
         return True  # Don't fail - it's optional
 
 def main():

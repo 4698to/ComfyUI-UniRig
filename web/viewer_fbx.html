@@ -347,6 +347,10 @@
                     // Store bounds for later use
                     meshBounds = box;
 
+                    // Calculate size and maxDim early (needed in traverse)
+                    const size = box.getSize(new THREE.Vector3());
+                    const maxDim = Math.max(size.x, size.y, size.z);
+
                     // Find skeleton
                     let foundSkeleton = false;
                     currentModel.traverse((child) => {
@@ -408,8 +412,6 @@
                     scene.add(currentModel);
 
                     // Adjust camera and grid for mesh size
-                    const size = box.getSize(new THREE.Vector3());
-                    const maxDim = Math.max(size.x, size.y, size.z);
                     const distance = maxDim * 2.5;
 
                     // Update grid size to match mesh

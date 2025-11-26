@@ -92,6 +92,11 @@ class SerializedAttention(PointModule):
             self.qknorm = QueryKeyNorm(channels, num_heads)
         else:
             print("WARNING: enable_qknorm is False in PTv3Object and training may be fragile")
+        # Graceful fallback if flash_attn is not available
+        if enable_flash and flash_attn is None:
+            print("[UniRig] flash_attn not available for PTv3Object, falling back to standard PyTorch attention")
+            enable_flash = False
+
         if enable_flash:
             assert (
                 enable_rpe is False
@@ -102,7 +107,6 @@ class SerializedAttention(PointModule):
             assert (
                 upcast_softmax is False
             ), "Set upcast_softmax to False when enable Flash Attention"
-            assert flash_attn is not None, "Make sure flash_attn is installed."
             self.patch_size = patch_size
             self.attn_drop = attn_drop
         else:

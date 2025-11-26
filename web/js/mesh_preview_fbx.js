@@ -67,15 +67,15 @@ app.registerExtension({
                         // Try different path formats based on filename
                         let filepath;
 
-                        // If filename is just a basename, it's in temp
+                        // If filename is just a basename, it's in output
                         if (!filename.includes('/') && !filename.includes('\\')) {
-                            // Try temp directory first
-                            filepath = `/view?filename=${encodeURIComponent(filename)}&type=temp&subfolder=`;
-                            console.log(`[UniRig] Using temp path: ${filepath}`);
+                            // Try output directory first
+                            filepath = `/view?filename=${encodeURIComponent(filename)}&type=output&subfolder=`;
+                            console.log(`[UniRig] Using output path: ${filepath}`);
                         } else {
                             // Full path - extract just the filename
                             const basename = filename.split(/[/\\]/).pop();
-                            filepath = `/view?filename=${encodeURIComponent(basename)}&type=temp&subfolder=`;
+                            filepath = `/view?filename=${encodeURIComponent(basename)}&type=output&subfolder=`;
                             console.log(`[UniRig] Extracted basename: ${basename}, path: ${filepath}`);
                         }
 

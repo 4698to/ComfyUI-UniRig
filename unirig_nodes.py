@@ -479,26 +479,42 @@ class UniRigExtractSkeleton:
             print(f"[UniRigExtractSkeleton] Saved skeleton NPZ to: {persistent_npz}")
             print(f"[UniRigExtractSkeleton] Bone data: {len(bone_joints)} joints, {len(tails)} tails")
 
-            # Build skeleton dict with basic data (using ALL joints for visualization)
+            # Build skeleton dict with ALL data (no need to load NPZ later)
             skeleton = {
-                "vertices": all_joints,  # All joint positions (19) for visualization
+                # Visualization data (all joints for SkeletonToMesh)
+                "vertices": all_joints,  # All joint positions for visualization
                 "edges": edges,  # Edges reference all_joints indices
-                "npz_path": persistent_npz,  # Include NPZ path for skinning
-                "mesh_bounds_min": mesh_bounds_min,  # For denormalization
-                "mesh_bounds_max": mesh_bounds_max,  # For denormalization
-                "mesh_center": mesh_center,  # For denormalization
-                "mesh_scale": mesh_scale,  # For denormalization
+
+                # Core skeleton data (for skinning)
+                "joints": bone_joints,  # Bone head positions (normalized)
+                "tails": tails,  # Bone tail positions (normalized)
+                "names": names_list,  # Bone names
+                "parents": parents_list,  # Parent bone indices
+
+                # Mesh data (for skinning)
+                "mesh_vertices": mesh_vertices,  # Normalized mesh vertices
+                "mesh_faces": mesh_faces,
+                "mesh_vertex_normals": vertex_normals,
+                "mesh_face_normals": face_normals,
+
+                # Normalization metadata
+                "mesh_bounds_min": mesh_bounds_min,
+                "mesh_bounds_max": mesh_bounds_max,
+                "mesh_center": mesh_center,
+                "mesh_scale": mesh_scale,
+                "is_normalized": True,  # Flag indicating data is normalized
+
+                # Legacy/compatibility
+                "skeleton_npz_path": persistent_npz,  # For backward compat
+                "bone_names": names_list,  # Legacy field name
+                "bone_parents": parents_list,  # Legacy field name
             }
 
-            # Add hierarchy data if available (for animation-ready export)
-            if 'bone_names' in skeleton_data:
-                skeleton['bone_names'] = names_list
-                skeleton['bone_parents'] = parents_list
-                if 'bone_to_head_vertex' in skeleton_data:
-                    skeleton['bone_to_head_vertex'] = skeleton_data['bone_to_head_vertex'].tolist()
-                print(f"[UniRigExtractSkeleton] Included hierarchy: {len(names_list)} bones with parent relationships")
-            else:
-                print(f"[UniRigExtractSkeleton] No hierarchy data in skeleton (edges-only mode)")
+            if 'bone_to_head_vertex' in skeleton_data:
+                skeleton['bone_to_head_vertex'] = skeleton_data['bone_to_head_vertex'].tolist()
+
+            print(f"[UniRigExtractSkeleton] Included hierarchy: {len(names_list)} bones with parent relationships")
+            print(f"[UniRigExtractSkeleton] Skeleton dict contains all data (no NPZ loading needed)")
 
             total_time = time.time() - total_start
             print(f"[UniRigExtractSkeleton] ✓✓✓ Skeleton extraction complete! ✓✓✓")
@@ -852,7 +868,7 @@ class UniRigApplySkinning:
                 shutil.copy(skeleton_npz_path, predict_skeleton_path)
             else:
                 # Denormalize joint positions
-                joints_normalized = skeleton_data['bone_to_head_vertex']
+                joints_normalized = skeleton_data['joints']
                 joints_denormalized = joints_normalized * mesh_scale + mesh_center
 
                 # Denormalize tail positions
@@ -867,8 +883,8 @@ class UniRigApplySkinning:
 
                 # Save denormalized skeleton
                 save_data = {
-                    'bone_names': skeleton_data['bone_names'],
-                    'bone_parents': skeleton_data['bone_parents'],
+                    'bone_names': skeleton_data['names'],
+                    'bone_parents': skeleton_data['parents'],
                     'bone_to_head_vertex': joints_denormalized,
                     'tails': tails_denormalized,
                 }
@@ -1526,8 +1542,13 @@ class UniRigPreviewRiggedMesh:
 
         print(f"[UniRigPreviewRiggedMesh] FBX path: {fbx_path}")
 
-        # Get just the filename (viewer will load from temp directory)
-        filename = os.path.basename(fbx_path)
+        # Copy FBX to ComfyUI's output directory so it can be served via /view endpoint
+        output_dir = folder_paths.get_output_directory()
+        filename = f"rigged_preview_{int(time.time())}.fbx"
+        output_fbx_path = os.path.join(output_dir, filename)
+
+        shutil.copy2(fbx_path, output_fbx_path)
+        print(f"[UniRigPreviewRiggedMesh] Copied FBX to output: {output_fbx_path}")
 
         # Get mesh info if available
         has_skinning = rigged_mesh.get("has_skinning", False)
@@ -1546,6 +1567,356 @@ class UniRigPreviewRiggedMesh:
         }
 
 
+class UniRigDenormalizeSkeleton:
+    """
+    Denormalize skeleton from [-1, 1] range back to original mesh scale.
+    This makes the transformation explicit and debuggable.
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "skeleton": ("SKELETON",),
+            }
+        }
+
+    RETURN_TYPES = ("SKELETON",)
+    RETURN_NAMES = ("denormalized_skeleton",)
+    FUNCTION = "denormalize"
+    CATEGORY = "UniRig/Utils"
+
+    def denormalize(self, skeleton):
+        print(f"[UniRigDenormalizeSkeleton] ⏱️  Starting denormalization...")
+
+        # Read data directly from skeleton dict (no NPZ loading needed!)
+        mesh_center = skeleton.get('mesh_center')
+        mesh_scale = skeleton.get('mesh_scale')
+
+        if mesh_center is None or mesh_scale is None:
+            print(f"[UniRigDenormalizeSkeleton] WARNING: Missing mesh bounds, skeleton is not normalized")
+            # Return skeleton as-is
+            return (skeleton,)
+
+        # Get normalized data from skeleton dict
+        joints_normalized = np.array(skeleton['joints'])
+        tails_normalized = np.array(skeleton['tails'])
+
+        # Denormalize joint and tail positions
+        joints_denormalized = joints_normalized * mesh_scale + mesh_center
+        tails_denormalized = tails_normalized * mesh_scale + mesh_center
+
+        print(f"[UniRigDenormalizeSkeleton] Denormalization:")
+        print(f"  Mesh center: {mesh_center}")
+        print(f"  Mesh scale: {mesh_scale}")
+        print(f"  Joint extents before: {joints_normalized.min(axis=0)} to {joints_normalized.max(axis=0)}")
+        print(f"  Joint extents after: {joints_denormalized.min(axis=0)} to {joints_denormalized.max(axis=0)}")
+
+        # Create denormalized skeleton dict (update existing dict)
+        denormalized_skeleton = {
+            **skeleton,  # Copy all fields from original skeleton
+            'joints': joints_denormalized,
+            'tails': tails_denormalized,
+            'is_normalized': False,  # Update flag
+        }
+
+        print(f"[UniRigDenormalizeSkeleton] ✓ Denormalization complete (no file I/O needed)")
+
+        return (denormalized_skeleton,)
+
+
+class UniRigValidateSkeleton:
+    """
+    Validate skeleton quality and data integrity.
+    Provides warnings if issues are detected.
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "skeleton": ("SKELETON",),
+            }
+        }
+
+    RETURN_TYPES = ("SKELETON", "STRING")
+    RETURN_NAMES = ("skeleton", "validation_report")
+    FUNCTION = "validate"
+    CATEGORY = "UniRig/Utils"
+
+    def validate(self, skeleton):
+        print(f"[UniRigValidateSkeleton] Validating skeleton...")
+
+        issues = []
+        warnings = []
+
+        # Check for required fields
+        required_fields = ['joints', 'names', 'parents']
+        for field in required_fields:
+            if field not in skeleton:
+                issues.append(f"Missing required field: {field}")
+
+        if issues:
+            report = "VALIDATION FAILED:\n" + "\n".join(f"- {issue}" for issue in issues)
+            print(f"[UniRigValidateSkeleton] ✗ {report}")
+            return (skeleton, report)
+
+        # Get data
+        joints = skeleton.get('joints')
+        names = skeleton.get('names')
+        parents = skeleton.get('parents')
+        is_normalized = skeleton.get('is_normalized', None)
+
+        # Check counts match
+        num_joints = len(joints) if isinstance(joints, (list, np.ndarray)) else 0
+        num_names = len(names) if isinstance(names, (list, np.ndarray)) else 0
+        num_parents = len(parents) if isinstance(parents, (list, np.ndarray)) else 0
+
+        if not (num_joints == num_names == num_parents):
+            issues.append(f"Count mismatch: {num_joints} joints, {num_names} names, {num_parents} parents")
+
+        # Check normalization status
+        if is_normalized is None:
+            warnings.append("Normalization status unknown")
+        elif is_normalized:
+            # Check if joints are in expected range for normalized skeleton
+            joints_array = np.array(joints)
+            min_val = joints_array.min()
+            max_val = joints_array.max()
+            if min_val < -1.5 or max_val > 1.5:
+                warnings.append(f"Normalized skeleton has values outside [-1, 1]: [{min_val:.2f}, {max_val:.2f}]")
+        else:
+            # Denormalized - check if values are reasonable
+            joints_array = np.array(joints)
+            min_val = joints_array.min()
+            max_val = joints_array.max()
+            if abs(min_val) > 1000 or abs(max_val) > 1000:
+                warnings.append(f"Denormalized skeleton has very large values: [{min_val:.2f}, {max_val:.2f}]")
+
+        # Build report
+        if issues:
+            report = "VALIDATION FAILED:\n" + "\n".join(f"- {issue}" for issue in issues)
+            if warnings:
+                report += "\n\nWARNINGS:\n" + "\n".join(f"- {warning}" for warning in warnings)
+            print(f"[UniRigValidateSkeleton] ✗ {report}")
+        elif warnings:
+            report = "VALIDATION PASSED WITH WARNINGS:\n" + "\n".join(f"- {warning}" for warning in warnings)
+            print(f"[UniRigValidateSkeleton] ⚠ {report}")
+        else:
+            report = f"VALIDATION PASSED:\n- {num_joints} joints\n- Hierarchy valid\n- Normalization: {'normalized' if is_normalized else 'denormalized'}"
+            print(f"[UniRigValidateSkeleton] ✓ {report}")
+
+        return (skeleton, report)
+
+
+class UniRigPrepareSkeletonForSkinning:
+    """
+    Prepare skeleton data in the exact format required by the skinning model.
+    Saves predict_skeleton.npz with correct field names.
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "skeleton": ("SKELETON",),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("skeleton_npz_path",)
+    FUNCTION = "prepare"
+    CATEGORY = "UniRig/Utils"
+
+    def prepare(self, skeleton):
+        print(f"[UniRigPrepareSkeletonForSkinning] Preparing skeleton for skinning...")
+
+        # Create temporary directory for predict_skeleton.npz
+        temp_dir = tempfile.mkdtemp(prefix="unirig_skinning_")
+        predict_skeleton_dir = os.path.join(temp_dir, "input")
+        os.makedirs(predict_skeleton_dir, exist_ok=True)
+        predict_skeleton_path = os.path.join(predict_skeleton_dir, "predict_skeleton.npz")
+
+        # Read ALL data from skeleton dict (no NPZ loading!)
+        # Build save_data dict with CORRECT field names for RawData
+        save_data = {
+            # Core skeleton data (MUST use these exact names for RawData)
+            'joints': skeleton['joints'],
+            'names': skeleton['names'],
+            'parents': skeleton['parents'],
+            'tails': skeleton['tails'],
+        }
+
+        # Add mesh data (use prefixed keys from ExtractSkeleton)
+        mesh_data_mapping = {
+            'mesh_vertices': 'vertices',
+            'mesh_faces': 'faces',
+            'mesh_vertex_normals': 'vertex_normals',
+            'mesh_face_normals': 'face_normals',
+        }
+        for skel_key, npz_key in mesh_data_mapping.items():
+            if skel_key in skeleton:
+                save_data[npz_key] = skeleton[skel_key]
+
+        # Add optional fields that RawData expects
+        save_data['skin'] = None  # Will be filled by skinning
+        save_data['no_skin'] = None
+        save_data['matrix_local'] = skeleton.get('matrix_local')
+        save_data['path'] = None
+        save_data['cls'] = skeleton.get('cls')
+
+        # Save NPZ (only place where we save to disk for ML process)
+        np.savez(predict_skeleton_path, **save_data)
+
+        print(f"[UniRigPrepareSkeletonForSkinning] ✓ Saved skeleton to: {predict_skeleton_path}")
+        print(f"[UniRigPrepareSkeletonForSkinning] Fields saved: {list(save_data.keys())}")
+        print(f"[UniRigPrepareSkeletonForSkinning] Read all data from skeleton dict (no NPZ loading needed)")
+
+        return (predict_skeleton_path,)
+
+
+class UniRigApplySkinningML:
+    """
+    Apply skinning weights using ML.
+    Takes skeleton dict and mesh, prepares data and runs ML inference.
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "mesh": ("TRIMESH",),
+                "skeleton": ("SKELETON",),
+            }
+        }
+
+    RETURN_TYPES = ("RIGGED_MESH",)
+    FUNCTION = "apply_skinning"
+    CATEGORY = "UniRig"
+
+    def apply_skinning(self, mesh, skeleton):
+        print(f"[UniRigApplySkinningML] ⏱️  Starting ML skinning...")
+
+        # Create temporary directory
+        temp_dir = tempfile.mkdtemp(prefix="unirig_skinning_")
+        predict_skeleton_dir = os.path.join(temp_dir, "input")
+        os.makedirs(predict_skeleton_dir, exist_ok=True)
+
+        # Prepare skeleton NPZ from dict (absorb PrepareSkeletonForSkinning logic)
+        predict_skeleton_path = os.path.join(predict_skeleton_dir, "predict_skeleton.npz")
+        save_data = {
+            'joints': skeleton['joints'],
+            'names': skeleton['names'],
+            'parents': skeleton['parents'],
+            'tails': skeleton['tails'],
+        }
+
+        # Add mesh data
+        mesh_data_mapping = {
+            'mesh_vertices': 'vertices',
+            'mesh_faces': 'faces',
+            'mesh_vertex_normals': 'vertex_normals',
+            'mesh_face_normals': 'face_normals',
+        }
+        for skel_key, npz_key in mesh_data_mapping.items():
+            if skel_key in skeleton:
+                save_data[npz_key] = skeleton[skel_key]
+
+        # Add optional RawData fields
+        save_data['skin'] = None
+        save_data['no_skin'] = None
+        save_data['matrix_local'] = skeleton.get('matrix_local')
+        save_data['path'] = None
+        save_data['cls'] = skeleton.get('cls')
+
+        np.savez(predict_skeleton_path, **save_data)
+        print(f"[UniRigApplySkinningML] Prepared skeleton NPZ: {predict_skeleton_path}")
+
+        # Export mesh to GLB
+        input_glb = os.path.join(temp_dir, "input.glb")
+
+        mesh.export(input_glb)
+        print(f"[UniRigApplySkinningML] Exported mesh: {mesh.vertices.shape[0]} vertices, {mesh.faces.shape[0]} faces")
+
+        # Run skinning inference
+        print(f"[UniRigApplySkinningML] Running skinning inference...")
+
+        python_exe = sys.executable  # Use current Python (conda env)
+        run_script = os.path.join(UNIRIG_PATH, "run.py")
+        config_path = os.path.join(UNIRIG_PATH, "configs", "task", "quick_inference_unirig_skin.yaml")
+        output_fbx = os.path.join(temp_dir, "rigged.fbx")
+
+        cmd = [
+            python_exe, run_script,
+            "--task", config_path,
+            "--input", input_glb,
+            "--output", output_fbx,
+            "--npz_dir", temp_dir,
+            "--seed", "123"
+        ]
+
+        # Set BLENDER_EXE environment variable for FBX export
+        env = os.environ.copy()
+        if BLENDER_EXE:
+            env['BLENDER_EXE'] = BLENDER_EXE
+
+        result = subprocess.run(
+            cmd,
+            cwd=UNIRIG_PATH,
+            capture_output=True,
+            text=True,
+            timeout=600,
+            env=env
+        )
+
+        if result.stdout:
+            print(f"[UniRigApplySkinningML] Skinning stdout:\n{result.stdout}")
+        if result.stderr:
+            print(f"[UniRigApplySkinningML] Skinning stderr:\n{result.stderr}")
+
+        if result.returncode != 0:
+            print(f"[UniRigApplySkinningML] ✗ Skinning failed with return code: {result.returncode}")
+            raise RuntimeError(f"Skinning generation failed with exit code {result.returncode}")
+
+        print(f"[UniRigApplySkinningML] ⏱️  Skinning completed")
+
+        # Find output FBX
+        possible_paths = [
+            output_fbx,
+            os.path.join(temp_dir, "rigged.fbx"),
+            os.path.join(temp_dir, "output", "rigged.fbx"),
+        ]
+
+        fbx_path = None
+        for path in possible_paths:
+            if os.path.exists(path):
+                fbx_path = path
+                break
+
+        if not fbx_path:
+            # Search for any FBX files
+            search_paths = [temp_dir, os.path.join(temp_dir, "output")]
+            for search_dir in search_paths:
+                if os.path.exists(search_dir):
+                    fbx_files = glob.glob(os.path.join(search_dir, "*.fbx"))
+                    if fbx_files:
+                        fbx_path = fbx_files[0]
+                        break
+
+        if not fbx_path or not os.path.exists(fbx_path):
+            raise RuntimeError(f"Skinning output FBX not found. Searched: {possible_paths}")
+
+        print(f"[UniRigApplySkinningML] ✓ Found output FBX: {fbx_path}")
+        print(f"[UniRigApplySkinningML] FBX file size: {os.path.getsize(fbx_path)} bytes")
+
+        # Create rigged mesh dict
+        rigged_mesh = {
+            "fbx_path": fbx_path,
+            "has_skinning": True,
+            "has_skeleton": True,
+        }
+
+        print(f"[UniRigApplySkinningML] ✓✓✓ Skinning application complete! ✓✓✓")
+
+        return (rigged_mesh,)
+
+
 NODE_CLASS_MAPPINGS = {
     "UniRigExtractSkeleton": UniRigExtractSkeleton,
     "UniRigApplySkinning": UniRigApplySkinning,
@@ -1554,14 +1925,22 @@ NODE_CLASS_MAPPINGS = {
     "UniRigSaveRiggedMesh": UniRigSaveRiggedMesh,
     "UniRigLoadRiggedMesh": UniRigLoadRiggedMesh,
     "UniRigPreviewRiggedMesh": UniRigPreviewRiggedMesh,
+    "UniRigDenormalizeSkeleton": UniRigDenormalizeSkeleton,
+    "UniRigValidateSkeleton": UniRigValidateSkeleton,
+    "UniRigPrepareSkeletonForSkinning": UniRigPrepareSkeletonForSkinning,
+    "UniRigApplySkinningML": UniRigApplySkinningML,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "UniRigExtractSkeleton": "UniRig: Extract Skeleton",
-    "UniRigApplySkinning": "UniRig: Apply Skinning",
+    "UniRigApplySkinning": "UniRig: Apply Skinning (Legacy)",
     "UniRigExtractRig": "UniRig: Extract Full Rig (All-in-One)",
     "UniRigSaveSkeleton": "UniRig: Save Skeleton",
     "UniRigSaveRiggedMesh": "UniRig: Save Rigged Mesh",
     "UniRigLoadRiggedMesh": "UniRig: Load Rigged Mesh",
     "UniRigPreviewRiggedMesh": "UniRig: Preview Rigged Mesh",
+    "UniRigDenormalizeSkeleton": "UniRig: Denormalize Skeleton",
+    "UniRigValidateSkeleton": "UniRig: Validate Skeleton",
+    "UniRigPrepareSkeletonForSkinning": "UniRig: Prepare Skeleton for Skinning",
+    "UniRigApplySkinningML": "UniRig: Apply Skinning (ML Only)",
 }
