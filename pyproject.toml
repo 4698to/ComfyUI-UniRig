@@ -15,7 +15,7 @@ classifiers = [
 # Core dependencies for ComfyUI-UniRig
 dependencies = [
     # PyTorch (ComfyUI compatible)
-    "comfy-env>=0.0.16",
+    "comfy-env==0.0.19",
     "torch>=2.0.0",
     "torchvision",
 
@@ -23,7 +23,7 @@ dependencies = [
     "trimesh",
     "numpy",
     "scipy",
-    "PyOpenGL>=3.1.5",
+    "PyOpenGL==3.1.0",
     "pyrender",
     "libigl",
 

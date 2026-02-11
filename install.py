@@ -13,7 +13,6 @@ from pathlib import Path
 
 
 def main():
-    """Main installation function."""
     print("\n" + "=" * 60)
     print("ComfyUI-UniRig Installation")
     print("=" * 60)
@@ -23,21 +22,13 @@ def main():
 
     node_root = Path(__file__).parent.absolute()
 
-    # Run comfy-env install (handles tools + packages)
+    # Run comfy-env install
     try:
         install(config=node_root / "comfy-env.toml", mode="isolated", node_dir=node_root)
     except Exception as e:
         print(f"\n[UniRig] Installation FAILED: {e}")
         print("[UniRig] Report issues at: https://github.com/PozzettiAndrea/ComfyUI-UniRig/issues")
         return 1
-
-    # Verify Blender is available (installed to ComfyUI/tools/blender/)
-    comfyui_root = node_root.parent.parent  # custom_nodes/../.. = ComfyUI/
-    blender_exe = find_blender(comfyui_root / "tools" / "blender")
-    if blender_exe:
-        print(f"[UniRig] Blender: {blender_exe}")
-    else:
-        print("[UniRig] WARNING: Blender not found. FBX export may not work.")
 
     print("\n" + "=" * 60)
     print("[UniRig] Installation completed!")
