@@ -15,6 +15,7 @@ classifiers = [
 # Core dependencies for ComfyUI-UniRig
 dependencies = [
     # PyTorch (ComfyUI compatible)
+    "comfy-env>=0.0.13",
     "torch>=2.0.0",
     "torchvision",
 
