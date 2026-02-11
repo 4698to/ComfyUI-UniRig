@@ -115,7 +115,7 @@ def pose_rot_to_global(pose_rot, joints, parent_indices):
     return pose_global
 
 
-def apply_pose_to_rest(armature_obj, pose, bones_idx_dict, parent_indices, input_meshes, mia_joints):
+def apply_pose_to_rest(armature_obj, pose, bones_idx_dict, parent_indices, input_meshes, mia_joints, template_bone_data=None):
     """
     Apply MIA's pose prediction to transform skeleton from input pose to T-pose rest.
     Uses the original MIA approach with kinematic chain propagation.
@@ -127,6 +127,7 @@ def apply_pose_to_rest(armature_obj, pose, bones_idx_dict, parent_indices, input
         parent_indices: List of parent bone indices (-1 for root)
         input_meshes: List of mesh objects to transform along with skeleton
         mia_joints: (num_bones, 3) array of MIA-predicted joint positions (normalized)
+        template_bone_data: Optional dict mapping bone names to template data including rolls
     """
     if pose is None:
         print("[MIA Export] No pose data - skipping pose-to-rest transformation")
@@ -241,6 +242,25 @@ def apply_pose_to_rest(armature_obj, pose, bones_idx_dict, parent_indices, input
     bpy.ops.pose.armature_apply(selected=False)
     bpy.ops.object.mode_set(mode='OBJECT')
 
+    # Re-apply template bone orientations after armature_apply
+    # (armature_apply recalculates rolls based on new bone directions, losing template rolls)
+    # Use align_roll() with template Z-axis for correct orientation regardless of bone direction
+    if template_bone_data:
+        bpy.ops.object.mode_set(mode='EDIT')
+        roll_count = 0
+        for bone in armature_obj.data.edit_bones:
+            if bone.name in template_bone_data:
+                template_data = template_bone_data[bone.name]
+                if 'z_axis' in template_data:
+                    # Use align_roll with template Z-axis for correct orientation
+                    bone.align_roll(Vector(template_data['z_axis']))
+                else:
+                    # Fallback to direct roll if z_axis not available
+                    bone.roll = template_data['roll']
+                roll_count += 1
+        bpy.ops.object.mode_set(mode='OBJECT')
+        print(f"[MIA Export] Re-applied template bone orientations to {roll_count} bones after pose-to-rest")
+
     # Re-add armature modifier
     for mesh_obj in input_meshes:
         mod = mesh_obj.modifiers.new(name="Armature", type='ARMATURE')
@@ -331,7 +351,7 @@ def get_meshes(objects):
 def get_template_bone_data(armature_obj):
     """
     Capture bone orientations from template armature before modification.
-    Returns dict mapping bone name to roll value.
+    Returns dict mapping bone name to orientation data including z_axis for align_roll.
     """
     bpy.context.view_layer.objects.active = armature_obj
     bpy.ops.object.mode_set(mode='EDIT')
@@ -343,6 +363,7 @@ def get_template_bone_data(armature_obj):
             'head': tuple(bone.head),
             'tail': tuple(bone.tail),
             'matrix': [list(row) for row in bone.matrix],
+            'z_axis': tuple(bone.z_axis),  # Capture Z-axis for align_roll
         }
 
     bpy.ops.object.mode_set(mode='OBJECT')
@@ -812,7 +833,7 @@ def main():
 
     # Apply pose-to-rest transformation if pose data is available
     if pose is not None and args["reset_to_rest"]:
-        apply_pose_to_rest(armature, pose, bones_idx_dict, parent_indices, input_meshes, joints_normalized)
+        apply_pose_to_rest(armature, pose, bones_idx_dict, parent_indices, input_meshes, joints_normalized, template_bone_data)
 
     # Update scene before export
     bpy.context.view_layer.update()
