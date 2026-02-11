@@ -36,7 +36,11 @@ THREE_DIR = WEB_DIR / "three"
 def copy_fbx_viewer():
     """Copy FBX viewer files from comfy-3d-viewers package."""
     try:
-        from comfy_3d_viewers import get_fbx_html_path, get_fbx_bundle_path, get_fbx_node_widget_path
+        from comfy_3d_viewers import (
+            get_fbx_html_path, get_fbx_bundle_path, get_fbx_node_widget_path,
+            get_fbx_debug_html_path, get_fbx_compare_html_path,
+            get_fbx_debug_widget_path, get_fbx_compare_widget_path
+        )
 
         # Ensure directories exist
         WEB_DIR.mkdir(parents=True, exist_ok=True)
@@ -80,6 +84,54 @@ def copy_fbx_viewer():
                 print(f"[UniRig] mesh_preview_fbx.js is up to date")
         else:
             print(f"[UniRig] Warning: mesh_preview_fbx.js not found in comfy-3d-viewers package")
+
+        # Copy viewer_fbx_debug.html to web/
+        src_debug_html = get_fbx_debug_html_path()
+        dst_debug_html = WEB_DIR / "viewer_fbx_debug.html"
+        if os.path.exists(src_debug_html):
+            if not dst_debug_html.exists() or os.path.getmtime(src_debug_html) > os.path.getmtime(dst_debug_html):
+                shutil.copy2(src_debug_html, dst_debug_html)
+                print(f"[UniRig] Copied viewer_fbx_debug.html from comfy-3d-viewers")
+            else:
+                print(f"[UniRig] viewer_fbx_debug.html is up to date")
+        else:
+            print(f"[UniRig] Warning: viewer_fbx_debug.html not found in comfy-3d-viewers package")
+
+        # Copy viewer_fbx_compare.html to web/
+        src_compare_html = get_fbx_compare_html_path()
+        dst_compare_html = WEB_DIR / "viewer_fbx_compare.html"
+        if os.path.exists(src_compare_html):
+            if not dst_compare_html.exists() or os.path.getmtime(src_compare_html) > os.path.getmtime(dst_compare_html):
+                shutil.copy2(src_compare_html, dst_compare_html)
+                print(f"[UniRig] Copied viewer_fbx_compare.html from comfy-3d-viewers")
+            else:
+                print(f"[UniRig] viewer_fbx_compare.html is up to date")
+        else:
+            print(f"[UniRig] Warning: viewer_fbx_compare.html not found in comfy-3d-viewers package")
+
+        # Copy debug_skeleton_widget.js to web/js/
+        src_debug_widget = get_fbx_debug_widget_path()
+        dst_debug_widget = JS_DIR / "debug_skeleton_widget.js"
+        if os.path.exists(src_debug_widget):
+            if not dst_debug_widget.exists() or os.path.getmtime(src_debug_widget) > os.path.getmtime(dst_debug_widget):
+                shutil.copy2(src_debug_widget, dst_debug_widget)
+                print(f"[UniRig] Copied debug_skeleton_widget.js from comfy-3d-viewers")
+            else:
+                print(f"[UniRig] debug_skeleton_widget.js is up to date")
+        else:
+            print(f"[UniRig] Warning: debug_skeleton_widget.js not found in comfy-3d-viewers package")
+
+        # Copy compare_skeleton_widget.js to web/js/
+        src_compare_widget = get_fbx_compare_widget_path()
+        dst_compare_widget = JS_DIR / "compare_skeleton_widget.js"
+        if os.path.exists(src_compare_widget):
+            if not dst_compare_widget.exists() or os.path.getmtime(src_compare_widget) > os.path.getmtime(dst_compare_widget):
+                shutil.copy2(src_compare_widget, dst_compare_widget)
+                print(f"[UniRig] Copied compare_skeleton_widget.js from comfy-3d-viewers")
+            else:
+                print(f"[UniRig] compare_skeleton_widget.js is up to date")
+        else:
+            print(f"[UniRig] Warning: compare_skeleton_widget.js not found in comfy-3d-viewers package")
 
     except ImportError:
         print("[UniRig] Warning: comfy-3d-viewers package not installed, FBX viewer may not work")

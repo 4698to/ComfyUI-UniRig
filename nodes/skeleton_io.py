@@ -552,3 +552,134 @@ class UniRigViewRigging:
                 "bone_debug_data": [json.dumps(bone_debug_data)],
             }
         }
+
+
+class UniRigDebugSkeleton:
+    """
+    Debug skeleton visualization with bone roll/orientation analysis.
+
+    Opens the FBX in an enhanced debug viewer with:
+    - RGB axes showing local bone coordinate systems (X=red, Y=green, Z=blue/roll)
+    - Bone name labels
+    - Detailed bone information panel with roll angles
+    - Animation playback controls
+    - Bone filtering and size controls
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "fbx_path": ("STRING", {
+                    "tooltip": "Path to FBX file (from output directory or absolute path)"
+                }),
+            },
+        }
+
+    RETURN_TYPES = ()
+    OUTPUT_NODE = True
+    FUNCTION = "debug_skeleton"
+    CATEGORY = "unirig"
+
+    def debug_skeleton(self, fbx_path):
+        """Open the FBX in the debug skeleton viewer."""
+        print(f"[UniRigDebugSkeleton] Preparing debug skeleton view...")
+
+        # Handle both relative paths and absolute paths
+        output_dir = folder_paths.get_output_directory()
+
+        if os.path.isabs(fbx_path):
+            full_path = fbx_path
+        else:
+            full_path = os.path.join(output_dir, fbx_path)
+
+        if not os.path.exists(full_path):
+            raise RuntimeError(f"FBX file not found: {fbx_path}")
+
+        print(f"[UniRigDebugSkeleton] FBX path: {full_path}")
+
+        # For the viewer, use relative path if in output, otherwise basename
+        if os.path.isabs(fbx_path):
+            viewer_filename = os.path.basename(fbx_path)
+        else:
+            viewer_filename = fbx_path
+
+        return {
+            "ui": {
+                "fbx_file": [viewer_filename],
+            }
+        }
+
+
+class UniRigCompareSkeletons:
+    """
+    Compare two skeletons side-by-side with synced rotation.
+
+    Opens two FBX files in a split-view debug viewer where:
+    - Both skeletons are displayed side-by-side
+    - Camera rotation and zoom are synced between views
+    - Clicking a bone in one view highlights the matching bone (by name) in the other
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "fbx_path_left": ("STRING", {
+                    "tooltip": "Path to left skeleton FBX file (from output directory or absolute path)"
+                }),
+                "fbx_path_right": ("STRING", {
+                    "tooltip": "Path to right skeleton FBX file (from output directory or absolute path)"
+                }),
+            },
+        }
+
+    RETURN_TYPES = ()
+    OUTPUT_NODE = True
+    FUNCTION = "compare_skeletons"
+    CATEGORY = "unirig"
+
+    def compare_skeletons(self, fbx_path_left, fbx_path_right):
+        """Open both FBX files in the comparison skeleton viewer."""
+        print(f"[UniRig Compare] Preparing skeleton comparison view...")
+
+        output_dir = folder_paths.get_output_directory()
+
+        # Validate left FBX path
+        if os.path.isabs(fbx_path_left):
+            full_path_left = fbx_path_left
+        else:
+            full_path_left = os.path.join(output_dir, fbx_path_left)
+
+        if not os.path.exists(full_path_left):
+            raise RuntimeError(f"Left FBX file not found: {fbx_path_left}")
+
+        # Validate right FBX path
+        if os.path.isabs(fbx_path_right):
+            full_path_right = fbx_path_right
+        else:
+            full_path_right = os.path.join(output_dir, fbx_path_right)
+
+        if not os.path.exists(full_path_right):
+            raise RuntimeError(f"Right FBX file not found: {fbx_path_right}")
+
+        print(f"[UniRig Compare] Left FBX: {full_path_left}")
+        print(f"[UniRig Compare] Right FBX: {full_path_right}")
+
+        # For the viewer, use relative path if in output, otherwise basename
+        if os.path.isabs(fbx_path_left):
+            viewer_filename_left = os.path.basename(fbx_path_left)
+        else:
+            viewer_filename_left = fbx_path_left
+
+        if os.path.isabs(fbx_path_right):
+            viewer_filename_right = os.path.basename(fbx_path_right)
+        else:
+            viewer_filename_right = fbx_path_right
+
+        return {
+            "ui": {
+                "fbx_file_left": [viewer_filename_left],
+                "fbx_file_right": [viewer_filename_right],
+            }
+        }
