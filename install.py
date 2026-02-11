@@ -31,7 +31,7 @@ def main():
     except ImportError:
         print("Installing comfyui-envmanager...", flush=True)
         subprocess.run(
-            [sys.executable, "-m", "pip", "install", "comfyui-envmanager>=0.0.3"],
+            [sys.executable, "-m", "pip", "install", "comfyui-envmanager>=0.0.6"],
             check=False
         )
         print(flush=True)
