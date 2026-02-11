@@ -62,3 +62,11 @@ pytorch_version = "auto"   # Auto-detect compatible version
 
     [unirig.packages.linux]
     requirements = ["triton>=3.0.0"]
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NODE DEPENDENCIES
+# ═══════════════════════════════════════════════════════════════════════════════
+# Other ComfyUI custom nodes required by workflows
+
+[node_reqs]
+ComfyUI-GeometryPack = "PozzettiAndrea/ComfyUI-GeometryPack"
