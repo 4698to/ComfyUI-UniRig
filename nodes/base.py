@@ -24,10 +24,13 @@ except ImportError:
 
 # Get paths relative to this file
 NODE_DIR = Path(__file__).parent.parent.absolute()  # Go up from nodes/ to ComfyUI-UniRig/
-LIB_DIR = Path(__file__).parent / "lib"  # lib is now inside nodes/
-UNIRIG_PATH = str(LIB_DIR / "unirig")
-BLENDER_PARSE_SKELETON = str(LIB_DIR / "blender_parse_skeleton.py")
-BLENDER_EXTRACT_MESH_INFO = str(LIB_DIR / "blender_extract_mesh_info.py")
+NODES_DIR = Path(__file__).parent.absolute()  # nodes/ directory itself
+UNIRIG_PATH = str(NODES_DIR / "unirig")
+# Blender scripts are now in nodes/ directly (flat structure)
+BLENDER_PARSE_SKELETON = str(NODES_DIR / "blender_parse_skeleton.py")
+BLENDER_EXTRACT_MESH_INFO = str(NODES_DIR / "blender_extract_mesh_info.py")
+# Keep LIB_DIR for backwards compatibility
+LIB_DIR = NODES_DIR
 
 # Set up UniRig models directory in ComfyUI's models folder
 # Only contains skeleton.safetensors and skin.safetensors - no HuggingFace cache

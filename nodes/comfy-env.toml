@@ -1,9 +1,18 @@
+python = "3.11"  # Required by bpy 4.2
+
 [cuda]
-packages = ["torch-scatter","torch-cluster","spconv","flash-attn"]
+packages = ["torch-scatter", "torch-cluster", "spconv", "flash-attn"]
 
 [pypi-dependencies]
+# Blender
+bpy = ">=4.2,<4.3"
+
+# Core
 numpy = "<2.0"
 trimesh = { version = "*", extras = ["easy"] }
+torch = "*"
+
+# ML libs
 transformers = "==4.51.3"
 pytorch_lightning = "*"
 lightning = "*"
@@ -14,6 +23,8 @@ omegaconf = "*"
 python-box = "*"
 huggingface_hub = "*"
 wandb = "*"
+
+# Geometry
 fast-simplification = "*"
 pyrender = "*"
 libigl = "*"

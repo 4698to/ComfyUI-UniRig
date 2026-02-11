@@ -1,14 +1,13 @@
-"""UniRig Nodes - Auto-discovers and wraps isolated environments."""
+"""UniRig Nodes - Unified isolated environment with bpy + CUDA."""
 
 from pathlib import Path
-import importlib
 
 NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
 
 nodes_dir = Path(__file__).parent
 
-# Main nodes (no comfy-env.toml, not isolated)
+# === Non-isolated nodes (no heavy dependencies) ===
 from .mesh_io import UniRigLoadMesh, UniRigSaveMesh
 NODE_CLASS_MAPPINGS.update({
     "UniRigLoadMesh": UniRigLoadMesh,
@@ -20,37 +19,81 @@ NODE_DISPLAY_NAME_MAPPINGS.update({
 })
 print(f"[UniRig] Main nodes loaded (2 nodes)")
 
-# Auto-discover and wrap isolated nodes
-# Any subdirectory with comfy-env.toml gets wrapped
+# === Isolated nodes (bpy + CUDA dependencies) ===
+# These run in isolated Python 3.11 environment
 try:
     from comfy_env import wrap_isolated_nodes
 
-    for subdir in nodes_dir.iterdir():
-        if not subdir.is_dir():
-            continue
-        config_file = subdir / "comfy-env.toml"
-        if not config_file.exists():
-            continue
+    # Import node classes (these don't import bpy at module level)
+    # GPU/ML nodes
+    from .model_loaders import UniRigLoadModel
+    from .auto_rig import UniRigAutoRig
+    from .skeleton_extraction import UniRigExtractSkeletonNew
+    from .skinning import UniRigApplySkinningMLNew
+    from .mia_model_loader import MIALoadModel
+    from .mia_auto_rig import MIAAutoRig
 
-        # Found isolated environment - try to import and wrap
-        module_name = subdir.name
-        try:
-            # Import the submodule
-            module = importlib.import_module(f".{module_name}", package=__name__)
+    # Blender nodes
+    from .animation import UniRigApplyAnimation
+    from .skeleton_io import (
+        UniRigLoadRiggedMesh,
+        UniRigPreviewRiggedMesh,
+        UniRigExportPosedFBX,
+        UniRigViewRigging,
+        UniRigDebugSkeleton,
+        UniRigCompareSkeletons,
+    )
+    from .rest_pose_node import UniRigExtractRestPose
+    from .orientation_check import UniRigOrientationCheck
 
-            sub_mappings = getattr(module, "NODE_CLASS_MAPPINGS", {})
-            sub_display = getattr(module, "NODE_DISPLAY_NAME_MAPPINGS", {})
+    isolated_mappings = {
+        # GPU/ML nodes
+        "UniRigLoadModel": UniRigLoadModel,
+        "UniRigAutoRig": UniRigAutoRig,
+        "UniRigExtractSkeletonNew": UniRigExtractSkeletonNew,
+        "UniRigApplySkinningMLNew": UniRigApplySkinningMLNew,
+        "MIALoadModel": MIALoadModel,
+        "MIAAutoRig": MIAAutoRig,
+        # Blender nodes
+        "UniRigApplyAnimation": UniRigApplyAnimation,
+        "UniRigLoadRiggedMesh": UniRigLoadRiggedMesh,
+        "UniRigPreviewRiggedMesh": UniRigPreviewRiggedMesh,
+        "UniRigExportPosedFBX": UniRigExportPosedFBX,
+        "UniRigViewRigging": UniRigViewRigging,
+        "UniRigDebugSkeleton": UniRigDebugSkeleton,
+        "UniRigCompareSkeletons": UniRigCompareSkeletons,
+        "UniRigExtractRestPose": UniRigExtractRestPose,
+        "UniRigOrientationCheck": UniRigOrientationCheck,
+    }
 
-            if sub_mappings:
-                wrapped = wrap_isolated_nodes(sub_mappings, subdir)
-                NODE_CLASS_MAPPINGS.update(wrapped)
-                NODE_DISPLAY_NAME_MAPPINGS.update(sub_display)
-                print(f"[UniRig] {module_name} loaded ({len(sub_mappings)} nodes, isolated)")
-        except ImportError as e:
-            print(f"[UniRig] {module_name} not available: {e}")
+    isolated_display = {
+        # GPU/ML nodes
+        "UniRigLoadModel": "UniRig: Load Model",
+        "UniRigAutoRig": "UniRig: Auto Rig",
+        "UniRigExtractSkeletonNew": "UniRig: Extract Skeleton",
+        "UniRigApplySkinningMLNew": "UniRig: Apply Skinning ML",
+        "MIALoadModel": "MIA: Load Model",
+        "MIAAutoRig": "MIA: Auto Rig",
+        # Blender nodes
+        "UniRigApplyAnimation": "UniRig: Apply Animation",
+        "UniRigLoadRiggedMesh": "UniRig: Load Rigged Mesh",
+        "UniRigPreviewRiggedMesh": "UniRig: Preview Rigged Mesh",
+        "UniRigExportPosedFBX": "UniRig: Export Posed FBX",
+        "UniRigViewRigging": "UniRig: View Rigging",
+        "UniRigDebugSkeleton": "UniRig: Debug Skeleton",
+        "UniRigCompareSkeletons": "UniRig: Compare Skeletons",
+        "UniRigExtractRestPose": "UniRig: Extract Rest Pose",
+        "UniRigOrientationCheck": "UniRig: Orientation Check",
+    }
 
-except ImportError:
-    print("[UniRig] comfy-env not installed, isolated nodes disabled")
+    # Wrap all isolated nodes (comfy-env.toml is in this directory)
+    wrapped = wrap_isolated_nodes(isolated_mappings, nodes_dir)
+    NODE_CLASS_MAPPINGS.update(wrapped)
+    NODE_DISPLAY_NAME_MAPPINGS.update(isolated_display)
+    print(f"[UniRig] Isolated nodes loaded ({len(isolated_mappings)} nodes)")
+
+except ImportError as e:
+    print(f"[UniRig] comfy-env not installed, isolated nodes disabled: {e}")
 
 print(f"[UniRig] Total nodes loaded: {len(NODE_CLASS_MAPPINGS)}")
 

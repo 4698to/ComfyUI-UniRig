@@ -833,7 +833,7 @@ def _export_mia_fbx(
     Falls back to subprocess method if bpy is not available.
     """
     # Get template path - use UniRig's bundled Mixamo template
-    ASSETS_DIR = NODE_DIR / "assets"
+    ASSETS_DIR = NODE_DIR / "assets"  # ComfyUI-UniRig/assets
     template_path = ASSETS_DIR / "animation_characters" / "mixamo.fbx"
     if not template_path.exists():
         # Fallback to MIA template if available
