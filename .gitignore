@@ -9,6 +9,9 @@ dist/
 build/
 .ipynb_checkpoints/
 
+# Web files (copied from comfy-3d-viewers package at startup)
+web/
+
 # Virtual environments (including comfy-env isolated envs)
 venv/
 env/

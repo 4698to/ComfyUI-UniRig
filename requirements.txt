@@ -1,6 +1,9 @@
 # Environment manager (handles isolated environment and CUDA packages)
 comfy-env>=0.0.19
 
+# Shared 3D viewers (FBX viewer components)
+comfy-3d-viewers>=0.2.0
+
 # Core 3D processing
 trimesh
 numpy

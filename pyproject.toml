@@ -19,6 +19,9 @@ dependencies = [
     "torch>=2.0.0",
     "torchvision",
 
+    # Shared 3D viewers (FBX viewer components)
+    "comfy-3d-viewers>=0.2.0",
+
     # Core 3D processing
     "trimesh",
     "numpy",

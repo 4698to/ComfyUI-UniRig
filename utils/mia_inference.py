@@ -551,7 +551,7 @@ def _export_mia_fbx_direct(
         bpy.context.view_layer.objects.active = armature
         bpy.ops.object.mode_set(mode='EDIT')
 
-        # Update bone positions
+        # Update bone positions and apply template roll for Mixamo compatibility
         for bone in armature.data.edit_bones:
             bone.use_connect = False
             if bone.name in bones_idx_dict:
@@ -559,6 +559,7 @@ def _export_mia_fbx_direct(
                 bone.head = Vector(joints_normalized[idx])
                 if joints_tail_normalized is not None:
                     bone.tail = Vector(joints_tail_normalized[idx])
+                # Apply template roll for Mixamo-compatible twist axis
                 if bone.name in template_bone_data:
                     bone.roll = template_bone_data[bone.name]['roll']
 
@@ -751,6 +752,13 @@ def _apply_pose_to_rest_inline(armature_obj, pose, bones_idx_dict, parent_indice
         pose_matrix = Matrix(pose_global[idx].tolist())
         pbone.matrix = pose_matrix @ pbone.bone.matrix_local
         bpy.context.view_layer.update()
+
+    # Clear bone locations (match original MIA behavior from app_blender.py:124)
+    for bone_name in bones_idx_dict:
+        pbone = armature_obj.pose.bones.get(bone_name)
+        if pbone:
+            pbone.location = (0, 0, 0)
+    bpy.context.view_layer.update()
 
     bpy.ops.object.mode_set(mode='OBJECT')
 

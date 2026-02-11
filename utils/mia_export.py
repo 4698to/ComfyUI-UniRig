@@ -202,6 +202,13 @@ def apply_pose_to_rest(armature_obj, pose, bones_idx_dict, parent_indices, input
         bpy.context.view_layer.update()
         applied_count += 1
 
+    # Clear bone locations (match original MIA behavior from app_blender.py:124)
+    for bone_name in bones_idx_dict:
+        pbone = armature_obj.pose.bones.get(bone_name)
+        if pbone:
+            pbone.location = (0, 0, 0)
+    bpy.context.view_layer.update()
+
     print(f"[MIA Export] Skipped {skipped_fingers} finger bones (keeping original pose)")
 
     bpy.ops.object.mode_set(mode='OBJECT')
@@ -423,13 +430,10 @@ def set_rest_bones(armature_obj, head, tail, bones_idx_dict, template_bone_data=
         bone.use_connect = False
         if bone.name in bones_idx_dict:
             idx = bones_idx_dict[bone.name]
-
-            # Set both head and tail from MIA (preserves correct weight mapping)
             bone.head = Vector(head[idx])
             if tail is not None:
                 bone.tail = Vector(tail[idx])
-
-            # Apply template roll for consistent twist axis
+            # Apply template roll for Mixamo-compatible twist axis
             if template_bone_data and bone.name in template_bone_data:
                 bone.roll = template_bone_data[bone.name]['roll']
 
