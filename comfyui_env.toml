@@ -21,12 +21,12 @@ requirements = [
     "fast-simplification",
     "pyrender",
     "libigl",
+    "spconv-cu124",  # spconv only supports up to CUDA 12.4
 ]
 
 no_deps = [
-    "spconv-cu{cuda_short}",
-    "torch-scatter",
-    "torch-cluster",
+    "torch-scatter==2.1.2",
+    "torch-cluster==1.6.3",
 ]
 
 [sources]
