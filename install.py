@@ -147,6 +147,101 @@ def ensure_vcredist():
 
 
 # =============================================================================
+# Blender Detection and Installation
+# =============================================================================
+
+def detect_blender():
+    """Detect existing Blender installation.
+
+    Returns path to Blender executable or None if not found.
+    Detection priority:
+    1. BLENDER_PATH env var (explicit override)
+    2. System PATH ('blender' command)
+    3. Platform-specific common locations
+    4. Bundled lib/blender/ directory
+    """
+    import shutil
+
+    # 1. Check BLENDER_PATH env var (explicit override)
+    blender_path = os.environ.get('BLENDER_PATH')
+    if blender_path and os.path.isfile(blender_path):
+        return blender_path
+
+    # 2. Check system PATH
+    blender_in_path = shutil.which('blender')
+    if blender_in_path:
+        return blender_in_path
+
+    # 3. Check platform-specific common locations
+    system = platform.system()
+    common_locations = []
+
+    if system == "Windows":
+        # Windows: Check Program Files
+        program_files = os.environ.get('ProgramFiles', r'C:\Program Files')
+        blender_foundation = Path(program_files) / "Blender Foundation"
+        if blender_foundation.exists():
+            # Find latest version (e.g., Blender 4.2, Blender 4.1, etc.)
+            for blender_dir in sorted(blender_foundation.glob("Blender*"), reverse=True):
+                exe = blender_dir / "blender.exe"
+                if exe.exists():
+                    common_locations.append(exe)
+
+    elif system == "Darwin":  # macOS
+        common_locations = [
+            Path("/Applications/Blender.app/Contents/MacOS/Blender"),
+        ]
+
+    else:  # Linux
+        common_locations = [
+            Path("/usr/bin/blender"),
+            Path("/usr/local/bin/blender"),
+            Path("/snap/bin/blender"),
+        ]
+
+    for loc in common_locations:
+        if isinstance(loc, Path) and loc.exists():
+            return str(loc)
+
+    # 4. Check bundled lib/blender/
+    node_root = Path(__file__).parent.absolute()
+    blender_dir = node_root / "lib" / "blender"
+    if blender_dir.exists():
+        from installer.blender import find_blender_executable
+        blender_exe = find_blender_executable(str(blender_dir))
+        if blender_exe:
+            return str(blender_exe)
+
+    return None
+
+
+def ensure_blender():
+    """Ensure Blender is available, installing if needed.
+
+    Returns path to Blender executable or None if installation failed.
+    Sets BLENDER_PATH env var so other nodes can detect it.
+    """
+    existing = detect_blender()
+    if existing:
+        print(f"[UniRig] Found existing Blender: {existing}")
+        os.environ['BLENDER_PATH'] = existing
+        return existing
+
+    print("[UniRig] Blender not found - installing...")
+    from installer.blender import install_blender
+    node_root = Path(__file__).parent.absolute()
+    target_dir = node_root / "lib" / "blender"
+    blender_exe = install_blender(target_dir=str(target_dir))
+
+    if blender_exe:
+        # Export path so other nodes can detect it
+        os.environ['BLENDER_PATH'] = blender_exe
+        print(f"[UniRig] Exported BLENDER_PATH={blender_exe}")
+
+    return blender_exe
+
+
+# =============================================================================
 # Main Installation
 # =============================================================================
 
@@ -196,19 +291,29 @@ def main():
         print("[UniRig] Isolated environment already exists and is ready!")
         print(f"[UniRig] Location: {env_dir}")
         print("[UniRig] To reinstall, delete the environment directory.")
-        return 0
+    else:
+        # Setup environment
+        try:
+            manager.setup(env_config, verify_packages=["torch", "torch_scatter"])
+        except Exception as e:
+            print(f"\n[UniRig] Installation FAILED: {e}")
+            print("[UniRig] Report issues at: https://github.com/PozzettiAndrea/ComfyUI-UniRig/issues")
+            return 1
 
-    # Setup environment
-    try:
-        manager.setup(env_config, verify_packages=["torch", "torch_scatter"])
-        print("\n" + "=" * 60)
-        print("[UniRig] Installation completed successfully!")
-        print("=" * 60)
-        return 0
-    except Exception as e:
-        print(f"\n[UniRig] Installation FAILED: {e}")
-        print("[UniRig] Report issues at: https://github.com/PozzettiAndrea/ComfyUI-UniRig/issues")
-        return 1
+    # Install Blender if not detected
+    print()
+    print("[UniRig] Checking Blender installation...")
+    blender_exe = ensure_blender()
+    if blender_exe:
+        print(f"[UniRig] Blender ready: {blender_exe}")
+    else:
+        print("[UniRig] WARNING: Blender installation failed.")
+        print("[UniRig] FBX export features may not work.")
+
+    print("\n" + "=" * 60)
+    print("[UniRig] Installation completed successfully!")
+    print("=" * 60)
+    return 0
 
 
 # =============================================================================

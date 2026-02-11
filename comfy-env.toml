@@ -23,6 +23,7 @@ pytorch_version = "auto"   # Auto-detect compatible version
         "trimesh",
         "numpy",
         "scipy",
+        "embreex",  # Required for trimesh ray casting
 
         # UniRig dependencies
         "transformers==4.51.3",

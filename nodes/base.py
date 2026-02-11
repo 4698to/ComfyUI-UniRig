@@ -56,8 +56,16 @@ import shutil
 BLENDER_DIR = LIB_DIR / "blender"
 BLENDER_EXE = None
 
-# 1. Check explicit override first
-if os.environ.get('UNIRIG_BLENDER_PATH'):
+# 1. Check explicit override first (BLENDER_PATH or UNIRIG_BLENDER_PATH)
+if os.environ.get('BLENDER_PATH'):
+    blender_path = os.environ.get('BLENDER_PATH')
+    if os.path.isfile(blender_path):
+        BLENDER_EXE = blender_path
+        print(f"[UniRig] Using Blender from BLENDER_PATH: {BLENDER_EXE}")
+    else:
+        print(f"[UniRig] Warning: BLENDER_PATH set but file not found: {blender_path}")
+elif os.environ.get('UNIRIG_BLENDER_PATH'):
+    # Backward compatibility
     blender_path = os.environ.get('UNIRIG_BLENDER_PATH')
     if os.path.isfile(blender_path):
         BLENDER_EXE = blender_path
@@ -89,7 +97,7 @@ if BLENDER_EXE is None:
     print("[UniRig] Skeleton extraction nodes require Blender 4.2+")
     print("[UniRig] Options:")
     print("[UniRig]   1. Install Blender and add to PATH")
-    print("[UniRig]   2. Set UNIRIG_BLENDER_PATH environment variable")
+    print("[UniRig]   2. Set BLENDER_PATH environment variable")
     print("[UniRig]   3. Run: python blender_install.py")
 
 # Set environment variable for subprocesses
