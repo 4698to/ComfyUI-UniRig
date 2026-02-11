@@ -1,7 +1,7 @@
-# This file is read by comfyui-envmanager.
+# ComfyUI-UniRig - Environment Configuration
 # Run: comfy-env install
 
-[cuda]
+[local.cuda]
 torch-scatter = "2.1.2"
 torch-cluster = "1.6.3"
 # spconv only has wheels up to cu126 - use explicit package name
