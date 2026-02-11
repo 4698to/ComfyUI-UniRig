@@ -431,6 +431,12 @@ bpy.data.objects.remove(anim_armature, do_unlink=True)
 print(f"[Blender Apply Animation] Exporting animated FBX...")
 os.makedirs(os.path.dirname(output_fbx) if os.path.dirname(output_fbx) else '.', exist_ok=True)
 
+# Fix material transparency (FBX import loses OPAQUE setting)
+for mat in bpy.data.materials:
+    if mat:
+        mat.blend_method = 'OPAQUE'
+        mat.shadow_method = 'OPAQUE'
+
 try:
     bpy.ops.object.select_all(action='DESELECT')
     model_armature.select_set(True)

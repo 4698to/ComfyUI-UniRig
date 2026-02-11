@@ -40,55 +40,20 @@ class UniRigAutoRig:
                 }),
             },
             "optional": {
-                "skeleton_template": (["mixamo", "smpl", "vroid", "articulationxl"], {
+                "skeleton_template": (["mixamo", "smpl", "vroid"], {
                     "default": "mixamo",
-                    "tooltip": "Skeleton template. 'mixamo' outputs Mixamo-compatible FBX ready for Mixamo animations. 'smpl' outputs SMPL-compatible skeleton."
+                    "tooltip": "Skeleton template. 'mixamo' outputs Mixamo-compatible FBX ready for Mixamo animations."
                 }),
                 "fbx_name": ("STRING", {
                     "default": "",
                     "tooltip": "Custom filename for saved FBX (without extension). If empty, uses auto-generated name."
-                }),
-                "seed": ("INT", {
-                    "default": 42,
-                    "min": 0,
-                    "max": 4294967295,
-                    "tooltip": "Random seed for skeleton generation"
                 }),
                 "target_face_count": ("INT", {
                     "default": 50000,
                     "min": 10000,
                     "max": 500000,
                     "step": 10000,
-                    "tooltip": "Target face count for mesh decimation. Higher = more detail, slower."
-                }),
-                # Skinning parameters
-                "voxel_grid_size": ("INT", {
-                    "default": 196,
-                    "min": 64,
-                    "max": 512,
-                    "step": 64,
-                    "tooltip": "Voxel grid resolution for spatial weight distribution. Higher = better quality, more VRAM. Default: 196 (model trained with this)"
-                }),
-                "num_samples": ("INT", {
-                    "default": 32768,
-                    "min": 8192,
-                    "max": 131072,
-                    "step": 8192,
-                    "tooltip": "Number of surface samples for weight calculation. Higher = more accurate, slower. Default: 32768"
-                }),
-                "vertex_samples": ("INT", {
-                    "default": 8192,
-                    "min": 2048,
-                    "max": 32768,
-                    "step": 2048,
-                    "tooltip": "Number of vertex samples. Higher = more accurate vertex processing. Default: 8192"
-                }),
-                "voxel_mask_power": ("FLOAT", {
-                    "default": 0.5,
-                    "min": 0.1,
-                    "max": 5.0,
-                    "step": 0.1,
-                    "tooltip": "Power for voxel mask weight sharpness (alpha). Lower = smoother transitions. Default: 0.5 (model trained with this)"
+                    "tooltip": "Target face count for mesh decimation. Warning: changing from default may reduce quality."
                 }),
             }
         }
@@ -99,8 +64,7 @@ class UniRigAutoRig:
     CATEGORY = "UniRig"
 
     def auto_rig(self, trimesh, skeleton_model, skinning_model,
-                 skeleton_template="mixamo", fbx_name="", seed=42, target_face_count=50000,
-                 voxel_grid_size=196, num_samples=32768, vertex_samples=8192, voxel_mask_power=0.5):
+                 skeleton_template="mixamo", fbx_name="", target_face_count=50000):
         """
         Complete rigging pipeline in one step.
 
@@ -121,7 +85,7 @@ class UniRigAutoRig:
         normalized_mesh, skeleton, texture_preview = skeleton_extractor.extract(
             trimesh=trimesh,
             skeleton_model=skeleton_model,
-            seed=seed,
+            seed=42,  # Fixed seed for reproducibility
             skeleton_template=skeleton_template,
             target_face_count=target_face_count
         )
@@ -140,10 +104,10 @@ class UniRigAutoRig:
             skeleton=skeleton,
             skinning_model=skinning_model,
             fbx_name=fbx_name,
-            voxel_grid_size=voxel_grid_size,
-            num_samples=num_samples,
-            vertex_samples=vertex_samples,
-            voxel_mask_power=voxel_mask_power
+            voxel_grid_size=196,      # Model trained with this
+            num_samples=32768,         # Optimal default
+            vertex_samples=8192,       # Optimal default
+            voxel_mask_power=0.5       # Model trained with this
         )
 
         skinning_time = time.time() - step_start
