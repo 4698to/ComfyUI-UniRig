@@ -13,54 +13,20 @@ classifiers = [
 ]
 
 # Core dependencies for ComfyUI-UniRig
-dependencies = [
-    # PyTorch (ComfyUI compatible)
-    "comfy-env>=0.0.19",
-    "torch>=2.0.0",
-    "torchvision",
-
-    # Shared 3D viewers (FBX viewer components)
-    "comfy-3d-viewers>=0.1.0",
-
-    # Core 3D processing
-    "trimesh",
-    "numpy",
-    "scipy",
-    "PyOpenGL==3.1.0",
-    "pyrender",
-    "libigl",
-
-    # UniRig ML dependencies
-    "transformers==4.51.3",
-    "pytorch-lightning",
-    "lightning",
-    "timm",
-    "einops",
-    "addict",
-
-    # Configuration
-    "omegaconf",
-    "python-box",
-
-    # HuggingFace
-    "huggingface-hub",
-    "hf_xet",
-
-    # Mesh processing
-    "fast-simplification",
-
-    # Optional: wandb for training (not needed for inference)
-    # "wandb",
-
-    # Note: torch-cluster, torch-scatter, and spconv are installed via lib/unirig/install.py
-    # Note: Blender is bundled and auto-installs on first use
-]
+dynamic = ["dependencies"]
 
 [project.urls]
 Repository = "https://github.com/PozzettiAndrea/ComfyUI-UniRig"
 Documentation = "https://github.com/PozzettiAndrea/ComfyUI-UniRig#readme"
 
 # Comfy Registry configuration
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
 [tool.comfy]
 PublisherId = "pznodes"
 DisplayName = "UniRig"
