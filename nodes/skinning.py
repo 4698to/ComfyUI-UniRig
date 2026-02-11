@@ -2,55 +2,36 @@
 Skinning nodes for UniRig - Apply skinning weights using ML models.
 
 Uses comfy-env isolated environment for GPU dependencies.
-Supports both subprocess inference (legacy) and direct Python inference.
+Uses direct Python inference with bpy for FBX export.
 """
 
 import os
 import sys
-import subprocess
 import tempfile
+import shutil
 import numpy as np
 import time
-import shutil
-import glob
-import json
 import folder_paths
 
 from comfy_env import isolated
 
-# Direct inference flag - when True, uses in-process inference without subprocess
-# Enable direct inference for skinning (no subprocess)
-USE_DIRECT_INFERENCE = True
-
 # Support both relative imports (ComfyUI) and absolute imports (testing)
-try:
-    from .constants import BLENDER_TIMEOUT, INFERENCE_TIMEOUT
-except ImportError:
-    from constants import BLENDER_TIMEOUT, INFERENCE_TIMEOUT
-
 try:
     from .base import (
         UNIRIG_PATH,
-        BLENDER_EXE,
         UNIRIG_MODELS_DIR,
         LIB_DIR,
-        setup_subprocess_env,
         decode_texture_to_comfy_image,
         create_placeholder_texture,
     )
 except ImportError:
     from base import (
         UNIRIG_PATH,
-        BLENDER_EXE,
         UNIRIG_MODELS_DIR,
         LIB_DIR,
-        setup_subprocess_env,
         decode_texture_to_comfy_image,
         create_placeholder_texture,
     )
-
-# In-process model cache module
-_MODEL_CACHE_MODULE = None
 
 # Direct inference module
 _DIRECT_INFERENCE_MODULE = None
@@ -98,27 +79,6 @@ def _get_direct_inference():
             print(f"[UniRig] Warning: Direct inference module not found at {direct_path}")
             _DIRECT_INFERENCE_MODULE = False
     return _DIRECT_INFERENCE_MODULE if _DIRECT_INFERENCE_MODULE else None
-
-
-def _get_model_cache():
-    """Get the in-process model cache module."""
-    global _MODEL_CACHE_MODULE
-    if _MODEL_CACHE_MODULE is None:
-        # Use sys.modules to ensure same instance across all imports
-        if "unirig_model_cache" in sys.modules:
-            _MODEL_CACHE_MODULE = sys.modules["unirig_model_cache"]
-        else:
-            cache_path = os.path.join(LIB_DIR, "model_cache.py")
-            if os.path.exists(cache_path):
-                import importlib.util
-                spec = importlib.util.spec_from_file_location("unirig_model_cache", cache_path)
-                _MODEL_CACHE_MODULE = importlib.util.module_from_spec(spec)
-                sys.modules["unirig_model_cache"] = _MODEL_CACHE_MODULE
-                spec.loader.exec_module(_MODEL_CACHE_MODULE)
-            else:
-                print(f"[UniRig] Warning: Model cache module not found at {cache_path}")
-                _MODEL_CACHE_MODULE = False
-    return _MODEL_CACHE_MODULE if _MODEL_CACHE_MODULE else None
 
 
 @isolated(env="unirig", import_paths=[".", ".."])
@@ -195,59 +155,12 @@ class UniRigApplySkinningMLNew:
                 "Please connect a UniRigLoadSkinningModel node."
             )
 
-        # Validate model has cache key
-        if not skinning_model.get("model_cache_key"):
-            # Check if there was an import error that caused cache loading to fail
-            try:
-                from .model_loaders import get_model_cache_error
-            except ImportError:
-                from model_loaders import get_model_cache_error
-
-            import_error = get_model_cache_error()
-
-            if import_error:
-                error_str = str(import_error).lower()
-                if "spconv" in error_str:
-                    raise RuntimeError(
-                        "UniRig model loading failed: spconv is not installed.\n\n"
-                        "spconv is required for GPU-accelerated point cloud processing.\n\n"
-                        "Install with:\n"
-                        "  pip install spconv-cu118  # For CUDA 11.8\n"
-                        "  pip install spconv-cu120  # For CUDA 12.0\n"
-                        "  pip install spconv-cu121  # For CUDA 12.1\n\n"
-                        "Choose the version matching your CUDA installation.\n"
-                        "Check CUDA version with: nvidia-smi"
-                    )
-                elif "torch_scatter" in error_str:
-                    raise RuntimeError(
-                        "UniRig model loading failed: torch-scatter is not installed.\n\n"
-                        "torch-scatter is required for efficient scatter operations.\n\n"
-                        "Install with:\n"
-                        "  pip install torch-scatter\n\n"
-                        "Note: If no wheel is available for your PyTorch version,\n"
-                        "you may need to build from source:\n"
-                        "  pip install git+https://github.com/rusty1s/pytorch_scatter.git"
-                    )
-                elif "torch_cluster" in error_str:
-                    raise RuntimeError(
-                        "UniRig model loading failed: torch-cluster is not installed.\n\n"
-                        "Install with:\n"
-                        "  pip install torch-cluster\n\n"
-                        "Note: If no wheel is available for your PyTorch version,\n"
-                        "you may need to build from source:\n"
-                        "  pip install git+https://github.com/rusty1s/pytorch_cluster.git"
-                    )
-                else:
-                    raise RuntimeError(
-                        f"UniRig model loading failed due to import error:\n{import_error}\n\n"
-                        "Check that all required dependencies are installed.\n"
-                        "Run: pip install -r requirements.txt"
-                    )
-            else:
-                print(f"[UniRigApplySkinningMLNew] VRAM saving mode: No cached model available.")
-                print(f"[UniRigApplySkinningMLNew] Falling back to subprocess inference...")
-                # We will handle fallback later in the inference step
-                pass
+        # Validate model has checkpoint path
+        if not skinning_model.get("checkpoint_path"):
+            raise RuntimeError(
+                "skinning_model checkpoint not found. "
+                "Please connect a UniRigLoadSkinningModel node."
+            )
 
         print(f"[UniRigApplySkinningMLNew] Using pre-loaded cached model")
         task_config_path = skinning_model.get("task_config_path")
@@ -335,326 +248,99 @@ class UniRigApplySkinningMLNew:
         if config_overrides:
             print(f"[UniRigApplySkinningMLNew] Config overrides: {config_overrides}")
 
-        # Variables for inference results
-        direct_skin_weights = None
-        use_direct = USE_DIRECT_INFERENCE and _get_direct_inference() is not None
+        # Run direct inference (no subprocess)
+        print(f"[UniRigApplySkinningMLNew] Running skinning inference with direct inference...")
+        direct_module = _get_direct_inference()
+        if not direct_module:
+            raise RuntimeError("Direct inference module not available. Check installation.")
 
-        if use_direct:
-            # DIRECT INFERENCE - no subprocess, no Lightning Trainer
-            print(f"[UniRigApplySkinningMLNew] Running skinning inference with DIRECT inference (no subprocess)...")
-            direct_module = _get_direct_inference()
+        # Get checkpoint path from skinning_model
+        checkpoint_path = skinning_model.get("checkpoint_path")
+        if not checkpoint_path:
+            # Fallback: use default path
+            checkpoint_path = os.path.join(UNIRIG_MODELS_DIR, "skin.safetensors")
 
-            # Get checkpoint path from skinning_model
-            checkpoint_path = skinning_model.get("checkpoint_path")
-            if not checkpoint_path:
-                # Fallback: use default path
-                checkpoint_path = os.path.join(UNIRIG_MODELS_DIR, "skin.safetensors")
+        if not os.path.exists(checkpoint_path):
+            raise RuntimeError(f"Skinning checkpoint not found: {checkpoint_path}")
 
-            if not os.path.exists(checkpoint_path):
-                raise RuntimeError(f"Skinning checkpoint not found: {checkpoint_path}")
+        print(f"[UniRigApplySkinningMLNew] Using checkpoint: {checkpoint_path}")
 
-            print(f"[UniRigApplySkinningMLNew] Using checkpoint: {checkpoint_path}")
+        # Get mesh data from skeleton dict or normalized_mesh
+        mesh_vertices = skeleton.get('mesh_vertices')
+        if mesh_vertices is None:
+            mesh_vertices = np.array(normalized_mesh.vertices, dtype=np.float32)
 
-            try:
-                # Get mesh data from skeleton dict or normalized_mesh
-                mesh_vertices = skeleton.get('mesh_vertices')
-                if mesh_vertices is None:
-                    mesh_vertices = np.array(normalized_mesh.vertices, dtype=np.float32)
+        mesh_normals = skeleton.get('mesh_vertex_normals')
+        if mesh_normals is None:
+            mesh_normals = np.array(normalized_mesh.vertex_normals, dtype=np.float32)
 
-                mesh_normals = skeleton.get('mesh_vertex_normals')
-                if mesh_normals is None:
-                    mesh_normals = np.array(normalized_mesh.vertex_normals, dtype=np.float32)
+        joints = np.array(skeleton['joints'], dtype=np.float32)
+        # Convert parent indices: None -> -1 for the model (handle before numpy conversion)
+        parents_list = skeleton['parents']
+        parents = np.array([-1 if p is None else int(p) for p in parents_list], dtype=np.int64)
 
-                joints = np.array(skeleton['joints'], dtype=np.float32)
-                # Convert parent indices: None -> -1 for the model (handle before numpy conversion)
-                parents_list = skeleton['parents']
-                parents = np.array([-1 if p is None else int(p) for p in parents_list], dtype=np.int64)
+        # Get mesh faces
+        mesh_faces = skeleton.get('mesh_faces')
+        if mesh_faces is None:
+            mesh_faces = np.array(normalized_mesh.faces, dtype=np.int32)
 
-                # Get mesh faces
-                mesh_faces = skeleton.get('mesh_faces')
-                if mesh_faces is None:
-                    mesh_faces = np.array(normalized_mesh.faces, dtype=np.int32)
+        # Get bone tails (if available)
+        tails = skeleton.get('tails')
+        if tails is not None:
+            tails = np.array(tails, dtype=np.float32)
 
-                # Get bone tails (if available)
-                tails = skeleton.get('tails')
-                if tails is not None:
-                    tails = np.array(tails, dtype=np.float32)
+        # Get voxel grid size from config overrides
+        voxel_grid_size_val = config_overrides.get('voxel_grid_size', 196)
 
-                # Get voxel grid size from config overrides
-                voxel_grid_size = config_overrides.get('voxel_grid_size', 196)
+        print(f"[UniRigApplySkinningMLNew] Mesh: {len(mesh_vertices)} vertices, {len(mesh_faces)} faces")
+        print(f"[UniRigApplySkinningMLNew] Skeleton: {len(joints)} joints")
 
-                print(f"[UniRigApplySkinningMLNew] Mesh: {len(mesh_vertices)} vertices, {len(mesh_faces)} faces")
-                print(f"[UniRigApplySkinningMLNew] Skeleton: {len(joints)} joints")
+        # Run direct skinning prediction
+        skin_weights = direct_module.predict_skinning(
+            vertices=mesh_vertices,
+            normals=mesh_normals,
+            joints=joints,
+            parents=parents,
+            checkpoint_path=checkpoint_path,
+            faces=mesh_faces,
+            tails=tails,
+            voxel_grid_size=voxel_grid_size_val,
+        )
 
-                # Run direct skinning prediction
-                direct_skin_weights = direct_module.predict_skinning(
-                    vertices=mesh_vertices,
-                    normals=mesh_normals,
-                    joints=joints,
-                    parents=parents,
-                    checkpoint_path=checkpoint_path,
-                    faces=mesh_faces,
-                    tails=tails,
-                    voxel_grid_size=voxel_grid_size,
-                )
+        inference_time = time.time() - step_start
+        print(f"[UniRigApplySkinningMLNew] ✓ Direct inference completed in {inference_time:.2f}s")
+        print(f"[UniRigApplySkinningMLNew] Skin weights shape: {skin_weights.shape}")
 
-                inference_time = time.time() - step_start
-                print(f"[UniRigApplySkinningMLNew] ✓ Direct inference completed in {inference_time:.2f}s")
-                print(f"[UniRigApplySkinningMLNew] Skin weights shape: {direct_skin_weights.shape}")
+        # Generate FBX output using direct bpy export
+        print(f"[UniRigApplySkinningMLNew] Generating FBX...")
 
-            except Exception as e:
-                import traceback
-                print(f"[UniRigApplySkinningMLNew] Direct inference failed: {e}")
-                traceback.print_exc()
-                # Fall back to subprocess
-                print(f"[UniRigApplySkinningMLNew] Falling back to subprocess inference...")
-                use_direct = False
-                direct_skin_weights = None
+        direct_export = _get_direct_export()
+        if not direct_export:
+            raise RuntimeError("Direct FBX export module not available. Check bpy installation.")
 
-        if not use_direct:
-            # SUBPROCESS INFERENCE (legacy fallback)
-            cache_key = skinning_model.get("model_cache_key")
-
-            if cache_key:
-                print(f"[UniRigApplySkinningMLNew] Running skinning inference with cached model...")
-                model_cache = _get_model_cache()
-                if not model_cache:
-                    raise RuntimeError(
-                        "Model cache module not available. "
-                        "Cannot run cached inference."
-                    )
-
-                print(f"[UniRigApplySkinningMLNew] Using cached model: {cache_key}")
-
-                request_data = {
-                    "seed": 123,
-                    "input": input_glb,
-                    "output": output_fbx,
-                    "npz_dir": temp_dir,
-                    "cls": skeleton.get('cls'),
-                    "data_name": "predict_skeleton.npz",
-                    "config_overrides": config_overrides,
-                }
-
-                try:
-                    result = model_cache.run_inference(cache_key, request_data)
-                    if "error" in result:
-                        error_msg = result['error']
-                        traceback_msg = result.get('traceback', 'No traceback available')
-                        raise RuntimeError(
-                            f"Cached model inference failed: {error_msg}\n"
-                            f"Traceback:\n{traceback_msg}\n\n"
-                            f"This node requires a working cached model. "
-                            f"If you need fallback support, use UniRigApplySkinningML instead."
-                        )
-
-                    inference_time = time.time() - step_start
-                    print(f"[UniRigApplySkinningMLNew] ✓ Cached inference completed in {inference_time:.2f}s")
-
-                except Exception as e:
-                    raise RuntimeError(
-                        f"Cached model inference exception: {str(e)}\n\n"
-                        f"This node requires a working cached model. "
-                        f"If you need fallback support, use UniRigApplySkinningML instead."
-                    )
-            else:
-                # FALLBACK TO SUBPROCESS (VRAM SAVING MODE)
-                print(f"[UniRigApplySkinningMLNew] Running skinning inference with subprocess (VRAM saving mode)...")
-
-                # Use lib/unirig/run.py directly
-                unirig_run_py = os.path.join(UNIRIG_PATH, "run.py")
-                if not os.path.exists(unirig_run_py):
-                     raise RuntimeError(f"UniRig run script not found at {unirig_run_py}")
-
-                # Build command
-                run_cmd = [
-                    sys.executable, unirig_run_py,
-                    "--task", task_config_path,
-                    "--seed", "123",
-                    "--input", input_glb,
-                    "--output", output_fbx,
-                    "--npz_dir", temp_dir,
-                    "--data_name", "predict_skeleton.npz",
-                ]
-
-                # Add config overrides as environment variable
-                # (unirig/run.py supports UNIRIG_CONFIG_OVERRIDES)
-                import json
-                env = setup_subprocess_env()
-                if config_overrides:
-                    env['UNIRIG_CONFIG_OVERRIDES'] = json.dumps(config_overrides)
-
-                # Add cls if available
-                cls_value = skeleton.get('cls')
-                if cls_value:
-                    run_cmd.extend(["--cls", cls_value])
-
-                print(f"[UniRigApplySkinningMLNew] Running command: {' '.join(run_cmd)}")
-
-                try:
-                    result = subprocess.run(
-                        run_cmd,
-                        capture_output=True,
-                        text=True,
-                        env=env,
-                        cwd=UNIRIG_PATH,
-                        timeout=INFERENCE_TIMEOUT
-                    )
-
-                    if result.stdout:
-                         print(f"[UniRigApplySkinningMLNew] Run output:\n{result.stdout}")
-
-                    if result.returncode != 0:
-                        raise RuntimeError(
-                            f"UniRig subprocess inference failed with exit code {result.returncode}\n"
-                            f"Error output:\n{result.stderr}"
-                        )
-
-                    inference_time = time.time() - step_start
-                    print(f"[UniRigApplySkinningMLNew] ✓ Subprocess inference completed in {inference_time:.2f}s")
-                except subprocess.TimeoutExpired:
-                    raise RuntimeError(f"UniRig inference timed out (>{INFERENCE_TIMEOUT}s)")
-                except Exception as e:
-                    print(f"[UniRigApplySkinningMLNew] Inference error: {e}")
-                    raise
-
-        # Generate FBX output
-        if direct_skin_weights is not None:
-            # DIRECT INFERENCE - generate FBX using direct bpy import (no subprocess)
-            print(f"[UniRigApplySkinningMLNew] Generating FBX from direct inference results...")
-
-            # Prepare data for FBX export
-            mesh_vertices = skeleton.get('mesh_vertices')
-            if mesh_vertices is None:
-                mesh_vertices = np.array(normalized_mesh.vertices, dtype=np.float32)
-            mesh_faces = skeleton.get('mesh_faces')
-            if mesh_faces is None:
-                mesh_faces = np.array(normalized_mesh.faces, dtype=np.int32)
-
-            # Try direct FBX export first (bpy as Python module - no subprocess)
-            direct_export = _get_direct_export()
-            use_direct_export = direct_export is not None
-
-            if use_direct_export:
-                print(f"[UniRigApplySkinningMLNew] Using DIRECT bpy FBX export (no subprocess)...")
-                try:
-                    direct_export.export_rigged_fbx(
-                        joints=skeleton['joints'],
-                        parents=[int(p) if p is not None else -1 for p in skeleton['parents']],
-                        names=list(skeleton['names']),
-                        output_fbx=output_fbx,
-                        vertices=mesh_vertices,
-                        faces=mesh_faces,
-                        skin=direct_skin_weights,
-                        tails=skeleton.get('tails'),
-                        uv_coords=skeleton.get('uv_coords'),
-                        uv_faces=skeleton.get('uv_faces'),
-                        texture_data_base64=skeleton.get('texture_data_base64') or '',
-                        texture_format=skeleton.get('texture_format') or 'PNG',
-                        material_name=skeleton.get('material_name') or 'Material',
-                    )
-                    print(f"[UniRigApplySkinningMLNew] ✓ FBX generated (direct bpy): {output_fbx}")
-
-                except Exception as e:
-                    print(f"[UniRigApplySkinningMLNew] Direct FBX export failed: {e}")
-                    print(f"[UniRigApplySkinningMLNew] Falling back to Blender subprocess...")
-                    use_direct_export = False
-
-            if not use_direct_export:
-                # Fallback: use Blender subprocess
-                import pickle
-
-                # Convert numpy arrays to plain Python lists for pickle
-                fbx_data = {
-                    'joints': skeleton['joints'].tolist() if isinstance(skeleton['joints'], np.ndarray) else skeleton['joints'],
-                    'parents': [int(p) if p is not None else -1 for p in skeleton['parents']],
-                    'names': list(skeleton['names']),
-                    'vertices': mesh_vertices.tolist() if isinstance(mesh_vertices, np.ndarray) else mesh_vertices,
-                    'faces': mesh_faces.tolist() if isinstance(mesh_faces, np.ndarray) else mesh_faces,
-                    'skin': direct_skin_weights.tolist() if isinstance(direct_skin_weights, np.ndarray) else direct_skin_weights,
-                    'tails': skeleton['tails'].tolist() if isinstance(skeleton.get('tails'), np.ndarray) else skeleton.get('tails'),
-                    'uv_coords': skeleton.get('uv_coords', []),
-                    'uv_faces': skeleton.get('uv_faces', []),
-                    'texture_data_base64': skeleton.get('texture_data_base64', ''),
-                    'texture_format': skeleton.get('texture_format', 'PNG'),
-                    'material_name': skeleton.get('material_name', 'Material'),
-                }
-
-                if isinstance(fbx_data['uv_coords'], np.ndarray):
-                    fbx_data['uv_coords'] = fbx_data['uv_coords'].tolist()
-                if isinstance(fbx_data['uv_faces'], np.ndarray):
-                    fbx_data['uv_faces'] = fbx_data['uv_faces'].tolist()
-
-                pkl_path = os.path.join(temp_dir, "skinned_data.pkl")
-                with open(pkl_path, 'wb') as f:
-                    pickle.dump(fbx_data, f)
-
-                print(f"[UniRigApplySkinningMLNew] Using Blender subprocess for FBX export...")
-
-                blender_export_script = os.path.join(LIB_DIR, "blender_export_fbx.py")
-                if not os.path.exists(blender_export_script):
-                    raise RuntimeError(f"Blender FBX export script not found: {blender_export_script}")
-
-                blender_cmd = [
-                    BLENDER_EXE,
-                    "--background",
-                    "--python", blender_export_script,
-                    "--",
-                    pkl_path,
-                    output_fbx,
-                ]
-
-                try:
-                    result = subprocess.run(
-                        blender_cmd,
-                        capture_output=True,
-                        text=True,
-                        timeout=BLENDER_TIMEOUT
-                    )
-                    if result.stdout:
-                        for line in result.stdout.split('\n'):
-                            if '[Blender FBX Export]' in line:
-                                print(f"[UniRigApplySkinningMLNew] {line}")
-
-                    if result.returncode != 0:
-                        print(f"[UniRigApplySkinningMLNew] Blender stderr: {result.stderr}")
-                        raise RuntimeError(f"Blender FBX export failed with code {result.returncode}")
-
-                    print(f"[UniRigApplySkinningMLNew] ✓ FBX generated (subprocess): {output_fbx}")
-
-                except subprocess.TimeoutExpired:
-                    raise RuntimeError(f"Blender FBX export timed out (>{BLENDER_TIMEOUT}s)")
-                except Exception as e:
-                    print(f"[UniRigApplySkinningMLNew] FBX export error: {e}")
-                    raise
+        direct_export.export_rigged_fbx(
+            joints=skeleton['joints'],
+            parents=[int(p) if p is not None else -1 for p in skeleton['parents']],
+            names=list(skeleton['names']),
+            output_fbx=output_fbx,
+            vertices=mesh_vertices,
+            faces=mesh_faces,
+            skin=skin_weights,
+            tails=skeleton.get('tails'),
+            uv_coords=skeleton.get('uv_coords'),
+            uv_faces=skeleton.get('uv_faces'),
+            texture_data_base64=skeleton.get('texture_data_base64') or '',
+            texture_format=skeleton.get('texture_format') or 'PNG',
+            material_name=skeleton.get('material_name') or 'Material',
+        )
+        print(f"[UniRigApplySkinningMLNew] ✓ FBX generated: {output_fbx}")
 
         print(f"[UniRigApplySkinningMLNew] Skinning completed")
 
-        # Find output FBX
-        possible_paths = [
-            output_fbx,
-            os.path.join(temp_dir, "rigged.fbx"),
-            os.path.join(temp_dir, "output", "rigged.fbx"),
-        ]
-
-        fbx_path = None
-        for path in possible_paths:
-            if os.path.exists(path):
-                fbx_path = path
-                break
-
-        if not fbx_path:
-            # Search for any FBX files
-            search_paths = [temp_dir, os.path.join(temp_dir, "output")]
-            for search_dir in search_paths:
-                if os.path.exists(search_dir):
-                    fbx_files = glob.glob(os.path.join(search_dir, "*.fbx"))
-                    if fbx_files:
-                        fbx_path = fbx_files[0]
-                        break
-
-        if not fbx_path or not os.path.exists(fbx_path):
-            raise RuntimeError(f"Skinning output FBX not found. Searched: {possible_paths}")
+        # Verify FBX output
+        fbx_path = output_fbx
+        if not os.path.exists(fbx_path):
+            raise RuntimeError(f"Skinning output FBX not found: {fbx_path}")
 
         print(f"[UniRigApplySkinningMLNew] Found output FBX: {fbx_path}")
         print(f"[UniRigApplySkinningMLNew] FBX file size: {os.path.getsize(fbx_path)} bytes")

@@ -27,7 +27,6 @@ except ImportError:
 NODE_DIR = Path(__file__).parent.parent.absolute()  # Go up from nodes/ to ComfyUI-UniRig/
 LIB_DIR = Path(__file__).parent / "lib"  # lib is now inside nodes/
 UNIRIG_PATH = str(LIB_DIR / "unirig")
-BLENDER_SCRIPT = str(LIB_DIR / "blender_extract.py")
 BLENDER_PARSE_SKELETON = str(LIB_DIR / "blender_parse_skeleton.py")
 BLENDER_EXTRACT_MESH_INFO = str(LIB_DIR / "blender_extract_mesh_info.py")
 
@@ -195,23 +194,3 @@ def normalize_skeleton(vertices: np.ndarray) -> tuple:
     return vertices_normalized, normalization_params
 
 
-def setup_subprocess_env() -> dict:
-    """
-    Set up environment variables for UniRig subprocess calls.
-
-    Returns:
-        dict: Environment dictionary with Blender and models paths configured
-    """
-    env = os.environ.copy()
-
-    if BLENDER_EXE:
-        env['BLENDER_EXE'] = BLENDER_EXE
-
-    # Set PyOpenGL to use OSMesa for headless rendering (no EGL/X11 needed)
-    env['PYOPENGL_PLATFORM'] = 'osmesa'
-
-    # Pass models directory to subprocess
-    if UNIRIG_MODELS_DIR:
-        env['UNIRIG_MODELS_DIR'] = str(UNIRIG_MODELS_DIR)
-
-    return env
