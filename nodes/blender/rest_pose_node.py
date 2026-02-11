@@ -11,7 +11,7 @@ import folder_paths
 
 # Support both relative imports (ComfyUI) and absolute imports (testing)
 try:
-    from .base import LIB_DIR
+    from ..base import LIB_DIR
 except ImportError:
     from base import LIB_DIR
 

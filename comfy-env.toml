@@ -1,58 +1,16 @@
-[unirig]
-python = "3.11"            # Python 3.11 required for bpy (Blender as Python module)
-cuda_version = "auto"      # Auto-detect from system
-pytorch_version = "auto"   # Auto-detect compatible version
-isolated = true            # Run node FUNCTION methods in subprocess with pixi Python
+# Root configuration - minimal deps for main nodes
+# Heavy dependencies are in nodes/blender/ and nodes/gpu/ isolated environments
 
-    [unirig.cuda]
-    # CUDA extensions - resolved automatically by comfy-env
-    torch-scatter = "*"
-    torch-cluster = "*"
-    spconv = "*"
-    flash-attn = "2.8.3"
+[apt]
+packages = ["libgl1-mesa-glx", "libglu1-mesa"]
 
-    [unirig.packages]
-    requirements = [
-        # Blender as Python module (direct import, no subprocess for preprocessing)
-        # Using 4.2 to match original UniRig
-        "bpy==4.2",
-        "cumm",
-        # Core
-        "trimesh[easy]",  # Include optional deps like shapely
-        "numpy<2.0",      # bpy requires numpy<2.0
-        "scipy",
-        "embreex",  # Required for trimesh ray casting
-        "pccm",     # Required by spconv
-        "shapely",  # Required by trimesh for mesh slicing
+# Main nodes only need basic mesh processing
+[pypi-dependencies]
+trimesh = { version = "*", extras = ["easy"] }
+numpy = "*"
+scipy = "*"
+igl = "*"
 
-        # UniRig dependencies
-        "transformers==4.51.3",
-        "python-box",
-        "einops",
-        "omegaconf",
-        "pytorch_lightning",
-        "lightning",
-        "addict",
-        "timm",
-        "huggingface_hub",
-        "wandb",
-        "fast-simplification",
-
-        # Mesh processing
-        "pyrender",
-        "libigl",
-    ]
-
-    [unirig.packages.windows]
-    requirements = ["triton-windows>=3.5.0"]
-
-    [unirig.packages.linux]
-    requirements = ["triton>=3.0.0"]
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# NODE DEPENDENCIES
-# ═══════════════════════════════════════════════════════════════════════════════
-# Other ComfyUI custom nodes required by workflows
-
+# Node dependencies (other ComfyUI custom nodes required by workflows)
 [node_reqs]
 ComfyUI-GeometryPack = "PozzettiAndrea/ComfyUI-GeometryPack"

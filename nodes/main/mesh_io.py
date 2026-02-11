@@ -23,7 +23,7 @@ except:
 
 # Import LIB_DIR from base module
 try:
-    from .base import LIB_DIR
+    from ..base import LIB_DIR
 except ImportError:
     from base import LIB_DIR
 

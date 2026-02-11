@@ -30,16 +30,7 @@ _RUNNING_TESTS = os.environ.get('PYTEST_CURRENT_TEST') is not None
 if not _RUNNING_TESTS:
     print("[ComfyUI-UniRig] Initializing custom node...")
 
-    # Setup import stubs BEFORE importing nodes
-    try:
-        from comfy_env import setup_isolated_imports
-        setup_isolated_imports(__file__)
-    except ImportError:
-        print("[ComfyUI-UniRig] comfy-env not installed, import stubbing disabled")
-    except Exception as e:
-        print(f"[ComfyUI-UniRig] Failed to setup import stubs: {e}")
-
-    # Import node classes
+    # Import node classes (isolation is handled by wrap_isolated_nodes in nodes/__init__.py)
     try:
         from .nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
         print("[ComfyUI-UniRig] [OK] Node classes imported successfully")
@@ -73,16 +64,6 @@ if not _RUNNING_TESTS:
         # Set to empty if import failed
         NODE_CLASS_MAPPINGS = {}
         NODE_DISPLAY_NAME_MAPPINGS = {}
-
-    # Enable process isolation - ALL nodes run in pixi env (Python 3.11)
-    try:
-        from comfy_env import enable_isolation
-        enable_isolation(NODE_CLASS_MAPPINGS)
-        print("[ComfyUI-UniRig] [OK] Process isolation enabled")
-    except ImportError:
-        pass  # Already warned above
-    except Exception as e:
-        print(f"[ComfyUI-UniRig] Failed to enable isolation: {e}")
 
     # Add static route for Three.js and other libraries
     try:
@@ -156,7 +137,7 @@ if not _RUNNING_TESTS:
             """API endpoint to fetch FBX file list dynamically."""
             try:
                 # Import here to avoid circular dependencies
-                from .nodes.skeleton_io import UniRigLoadRiggedMesh
+                from .nodes.blender.skeleton_io import UniRigLoadRiggedMesh
 
                 # Get source from query parameter (default to output)
                 source = request.query.get('source_folder', 'output')

@@ -1,7 +1,15 @@
 """
 UniRig ComfyUI nodes package.
+
+Organized by dependency environment:
+- main/    : Non-isolated nodes (trimesh, numpy)
+- blender/ : Isolated nodes (Python 3.11 + bpy)
+- gpu/     : Isolated nodes (Python 3.11 + CUDA + bpy)
 """
 
+from pathlib import Path
+
+# Export base module utilities for backwards compatibility
 from .base import (
     NODE_DIR,
     LIB_DIR,
@@ -11,66 +19,53 @@ from .base import (
     BLENDER_EXTRACT_MESH_INFO,
 )
 
-from .model_loaders import UniRigLoadModel
-from .auto_rig import UniRigAutoRig
-from .skeleton_io import (
-    UniRigLoadRiggedMesh,
-    UniRigPreviewRiggedMesh,
-    UniRigExportPosedFBX,
-    UniRigViewRigging,
-    UniRigDebugSkeleton,
-    UniRigCompareSkeletons,
-)
-from .rest_pose_node import UniRigExtractRestPose
-from .mesh_io import UniRigLoadMesh, UniRigSaveMesh
-from .animation import UniRigApplyAnimation
+NODE_CLASS_MAPPINGS = {}
+NODE_DISPLAY_NAME_MAPPINGS = {}
 
-# MIA (Make-It-Animatable) nodes
-from .mia_model_loader import MIALoadModel
-from .mia_auto_rig import MIAAutoRig
+# ==============================================================================
+# Main nodes (no isolation needed)
+# ==============================================================================
+from .main import NODE_CLASS_MAPPINGS as main_mappings
+from .main import NODE_DISPLAY_NAME_MAPPINGS as main_display
+NODE_CLASS_MAPPINGS.update(main_mappings)
+NODE_DISPLAY_NAME_MAPPINGS.update(main_display)
+print(f"[UniRig] Main nodes loaded ({len(main_mappings)} nodes)")
 
-# Utility nodes
-from .orientation_check import UniRigOrientationCheck
+# ==============================================================================
+# Isolated nodes - wrapped for subprocess execution
+# ==============================================================================
+try:
+    from comfy_env import wrap_isolated_nodes
 
-NODE_CLASS_MAPPINGS = {
-    "UniRigLoadModel": UniRigLoadModel,
-    "UniRigAutoRig": UniRigAutoRig,
-    "UniRigLoadRiggedMesh": UniRigLoadRiggedMesh,
-    "UniRigPreviewRiggedMesh": UniRigPreviewRiggedMesh,
-    "UniRigExportPosedFBX": UniRigExportPosedFBX,
-    "UniRigViewRigging": UniRigViewRigging,
-    "UniRigDebugSkeleton": UniRigDebugSkeleton,
-    "UniRigCompareSkeletons": UniRigCompareSkeletons,
-    "UniRigExtractRestPose": UniRigExtractRestPose,
-    "UniRigLoadMesh": UniRigLoadMesh,
-    "UniRigSaveMesh": UniRigSaveMesh,
-    "UniRigApplyAnimation": UniRigApplyAnimation,
-    # MIA nodes
-    "MIALoadModel": MIALoadModel,
-    "MIAAutoRig": MIAAutoRig,
-    # Utility nodes
-    "UniRigOrientationCheck": UniRigOrientationCheck,
-}
+    nodes_dir = Path(__file__).parent
 
-NODE_DISPLAY_NAME_MAPPINGS = {
-    "UniRigLoadModel": "UniRig: Load Model",
-    "UniRigAutoRig": "UniRig: Auto Rig",
-    "UniRigLoadRiggedMesh": "UniRig: Load Rigged Mesh",
-    "UniRigPreviewRiggedMesh": "UniRig: Preview Rigged Mesh",
-    "UniRigExportPosedFBX": "UniRig: Export Posed FBX",
-    "UniRigViewRigging": "UniRig: View Rigging",
-    "UniRigDebugSkeleton": "UniRig: Debug Skeleton",
-    "UniRigCompareSkeletons": "UniRig: Compare Skeletons",
-    "UniRigExtractRestPose": "UniRig: Extract Rest Pose",
-    "UniRigLoadMesh": "UniRig: Load Mesh",
-    "UniRigSaveMesh": "UniRig: Save Mesh",
-    "UniRigApplyAnimation": "UniRig: Apply Animation",
-    # MIA nodes
-    "MIALoadModel": "MIA: Load Model",
-    "MIAAutoRig": "MIA: Auto Rig",
-    # Utility nodes
-    "UniRigOrientationCheck": "UniRig: Orientation Check",
-}
+    # Blender nodes (isolated - needs Python 3.11 for bpy)
+    try:
+        from .blender import NODE_CLASS_MAPPINGS as blender_mappings
+        from .blender import NODE_DISPLAY_NAME_MAPPINGS as blender_display
+        blender_wrapped = wrap_isolated_nodes(blender_mappings, nodes_dir / "blender")
+        NODE_CLASS_MAPPINGS.update(blender_wrapped)
+        NODE_DISPLAY_NAME_MAPPINGS.update(blender_display)
+        print(f"[UniRig] Blender nodes loaded ({len(blender_mappings)} nodes, isolated)")
+    except ImportError as e:
+        print(f"[UniRig] Blender nodes not available: {e}")
+
+    # GPU nodes (isolated - needs Python 3.11 + CUDA + bpy)
+    try:
+        from .gpu import NODE_CLASS_MAPPINGS as gpu_mappings
+        from .gpu import NODE_DISPLAY_NAME_MAPPINGS as gpu_display
+        gpu_wrapped = wrap_isolated_nodes(gpu_mappings, nodes_dir / "gpu")
+        NODE_CLASS_MAPPINGS.update(gpu_wrapped)
+        NODE_DISPLAY_NAME_MAPPINGS.update(gpu_display)
+        print(f"[UniRig] GPU nodes loaded ({len(gpu_mappings)} nodes, isolated)")
+    except ImportError as e:
+        print(f"[UniRig] GPU nodes not available: {e}")
+
+except ImportError:
+    print("[UniRig] comfy-env not installed, isolated nodes disabled")
+    print("[UniRig] Install with: pip install comfy-env")
+
+print(f"[UniRig] Total nodes loaded: {len(NODE_CLASS_MAPPINGS)}")
 
 __all__ = [
     "NODE_CLASS_MAPPINGS",

@@ -1,0 +1,37 @@
+python = "3.11"
+cuda_version = "auto"
+pytorch_version = "auto"
+
+[cuda]
+torch-scatter = "*"
+torch-cluster = "*"
+spconv = "*"
+flash-attn = "2.8.3"
+
+[pypi-dependencies]
+bpy = ">=4.2,<4.3"
+numpy = "<2.0"
+trimesh = { version = "*", extras = ["easy"] }
+transformers = "==4.51.3"
+pytorch_lightning = "*"
+lightning = "*"
+timm = "*"
+einops = "*"
+addict = "*"
+omegaconf = "*"
+python-box = "*"
+huggingface_hub = "*"
+wandb = "*"
+fast-simplification = "*"
+pyrender = "*"
+libigl = "*"
+cumm = "*"
+embreex = "*"
+pccm = "*"
+shapely = "*"
+
+[pypi-dependencies.windows]
+triton-windows = ">=3.5.0"
+
+[pypi-dependencies.linux]
+triton = ">=3.0.0"

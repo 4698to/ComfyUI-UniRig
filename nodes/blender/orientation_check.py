@@ -18,8 +18,8 @@ try:
 except:
     folder_paths = None
 
-# Path to bundled reference mesh
-NODE_DIR = Path(__file__).parent.parent
+# Path to bundled reference mesh (now in nodes/blender/, so go up two levels to custom_node root)
+NODE_DIR = Path(__file__).parent.parent.parent
 REFERENCE_MESH_PATH = NODE_DIR / "assets" / "FinalBaseMesh.obj"
 
 

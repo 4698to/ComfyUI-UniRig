@@ -2,12 +2,20 @@
 ComfyUI-UniRig Prestartup Script
 
 Handles setup tasks before node loading:
+- Setup comfy-env environment (LD_LIBRARY_PATH, sys.path)
 - Copy FBX viewer files from comfy-3d-viewers package
 - Copy asset files to input/3d/
 - Copy animation templates to input/animation_templates/
 - Copy animation characters (e.g., official Mixamo rig) to input/animation_characters/
 - Create necessary directories
 """
+
+# Must run before any native library imports
+try:
+    from comfy_env import setup_env
+    setup_env()
+except ImportError:
+    pass  # comfy-env not installed yet
 
 import os
 import shutil

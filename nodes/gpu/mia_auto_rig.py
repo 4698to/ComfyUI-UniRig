@@ -16,13 +16,13 @@ try:
 except ImportError:
     OUTPUT_DIR = Path(__file__).parent.parent / "output"
 
-# Add utils to path for imports
-UTILS_DIR = Path(__file__).parent.parent / "utils"
+# Add utils to path for imports (now in nodes/gpu/, so go up two levels)
+UTILS_DIR = Path(__file__).parent.parent.parent / "utils"
 if str(UTILS_DIR) not in sys.path:
     sys.path.insert(0, str(UTILS_DIR))
 
 try:
-    from ..utils.mia_inference import run_mia_inference
+    from ...utils.mia_inference import run_mia_inference
 except ImportError:
     from mia_inference import run_mia_inference
 

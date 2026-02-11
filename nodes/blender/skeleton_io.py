@@ -14,12 +14,12 @@ import folder_paths
 
 # Support both relative imports (ComfyUI) and absolute imports (testing)
 try:
-    from .constants import BLENDER_TIMEOUT, PARSE_TIMEOUT, MESH_INFO_TIMEOUT, DEFAULT_EXTRUDE_SIZE
+    from ..main.constants import BLENDER_TIMEOUT, PARSE_TIMEOUT, MESH_INFO_TIMEOUT, DEFAULT_EXTRUDE_SIZE
 except ImportError:
     from constants import BLENDER_TIMEOUT, PARSE_TIMEOUT, MESH_INFO_TIMEOUT, DEFAULT_EXTRUDE_SIZE
 
 try:
-    from .base import (
+    from ..base import (
         BLENDER_PARSE_SKELETON,
         BLENDER_EXTRACT_MESH_INFO,
         NODE_DIR,

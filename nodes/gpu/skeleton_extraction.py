@@ -15,12 +15,12 @@ import folder_paths
 
 # Support both relative imports (ComfyUI) and absolute imports (testing)
 try:
-    from .constants import TARGET_FACE_COUNT
+    from ..main.constants import TARGET_FACE_COUNT
 except ImportError:
     from constants import TARGET_FACE_COUNT
 
 try:
-    from .base import (
+    from ..base import (
         UNIRIG_PATH,
         UNIRIG_MODELS_DIR,
         LIB_DIR,
