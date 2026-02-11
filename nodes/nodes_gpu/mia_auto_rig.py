@@ -77,7 +77,7 @@ class MIAAutoRig:
         4. Post-process and export FBX
         """
         # Lazy import - only run in isolated worker
-        from .mia_inference import run_mia_inference
+        from mia_inference import run_mia_inference
 
         total_start = time.time()
         print(f"[MIAAutoRig] Starting Make-It-Animatable rigging pipeline...")
