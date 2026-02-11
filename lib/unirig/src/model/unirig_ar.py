@@ -75,13 +75,13 @@ class UniRigAR(ModelSpec):
         # Force enable pre_norm
         llm_config.pre_norm = True
         self.transformer = AutoModelForCausalLM.from_config(config=llm_config)
-        print(f"[UniRigAR] ✓ Transformer loaded")
+        print(f"[UniRigAR] [OK] Transformer loaded")
 
         self.hidden_size = llm.hidden_size
 
         print(f"[UniRigAR] Loading mesh encoder...")
         self.mesh_encoder = get_mesh_encoder(**mesh_encoder)
-        print(f"[UniRigAR] ✓ Mesh encoder loaded")
+        print(f"[UniRigAR] [OK] Mesh encoder loaded")
         
         if (
             isinstance(self.mesh_encoder, MAP_MESH_ENCODER.michelangelo) or

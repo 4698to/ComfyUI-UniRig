@@ -236,7 +236,7 @@ def run_mia_inference(
     if str(LIB_DIR) not in sys.path:
         sys.path.insert(0, str(LIB_DIR))
     from mia.pipeline import prepare_input, preprocess, infer, bw_post_process
-    from mia import BONES_IDX_DICT
+    from mia import BONES_IDX_DICT, KINEMATIC_TREE
 
     device = models["device"]
     N = models["N"]
@@ -294,6 +294,16 @@ def run_mia_inference(
 
     # Prepare output data for Blender export
     joints_np = data.joints.squeeze(0).numpy()
+
+    # Debug: check pose data availability
+    print(f"[MIA] reset_to_rest={reset_to_rest}, data.pose is None: {data.pose is None}")
+    if data.pose is not None:
+        print(f"[MIA] Pose shape: {data.pose.shape}")
+        # Save pose to known location for debugging
+        pose_debug_path = "/tmp/mia_pose_debug.npy"
+        np.save(pose_debug_path, data.pose.squeeze(0).numpy())
+        print(f"[MIA] Saved pose data to {pose_debug_path}")
+
     output_data = {
         "mesh": data.mesh,
         "gs": None,
@@ -302,6 +312,7 @@ def run_mia_inference(
         "bw": bw.squeeze(0).numpy(),
         "pose": data.pose.squeeze(0).numpy() if reset_to_rest and data.pose is not None else None,
         "bones_idx_dict": BONES_IDX_DICT,
+        "parent_indices": KINEMATIC_TREE.parent_indices,  # For kinematic chain
         "pose_ignore_list": [],
     }
 
@@ -374,12 +385,15 @@ def _export_mia_fbx(
     temp_bw = os.path.join(temp_dir, "bw.bin")
     temp_joints = os.path.join(temp_dir, "joints.bin")
     temp_joints_tail = os.path.join(temp_dir, "joints_tail.bin")
+    temp_pose = os.path.join(temp_dir, "pose.bin")
 
     # Save arrays as raw binary
     data["bw"].astype(np.float32).tofile(temp_bw)
     data["joints"].astype(np.float32).tofile(temp_joints)
     if data.get("joints_tail") is not None:
         data["joints_tail"].astype(np.float32).tofile(temp_joints_tail)
+    if data.get("pose") is not None:
+        data["pose"].astype(np.float32).tofile(temp_pose)
 
     # Save metadata as JSON
     bones_idx_dict = dict(data["bones_idx_dict"])
@@ -394,6 +408,11 @@ def _export_mia_fbx(
     if data.get("joints_tail") is not None:
         json_data["joints_tail_path"] = temp_joints_tail
         json_data["joints_tail_shape"] = list(data["joints_tail"].shape)
+    if data.get("pose") is not None:
+        json_data["pose_path"] = temp_pose
+        json_data["pose_shape"] = list(data["pose"].shape)
+    if data.get("parent_indices") is not None:
+        json_data["parent_indices"] = data["parent_indices"]
 
     with open(temp_json, 'w') as f:
         json.dump(json_data, f)

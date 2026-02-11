@@ -1,0 +1,17 @@
+[test]
+name = "ComfyUI-UniRig"
+
+[test.verification]
+expected_nodes = [
+    "UniRigLoadModel",
+    "UniRigAutoRig",
+    "UniRigSaveSkeleton",
+    "UniRigLoadRiggedMesh",
+    "UniRigPreviewRiggedMesh",
+    "UniRigExportPosedFBX",
+    "UniRigLoadMesh",
+    "UniRigSaveMesh",
+    "UniRigApplyAnimation",
+    "MIALoadModel",
+    "MIAAutoRig",
+]

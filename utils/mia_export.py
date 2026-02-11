@@ -9,8 +9,134 @@ import bpy
 import sys
 import os
 import json
+import math
 import numpy as np
-from mathutils import Vector, Matrix
+from mathutils import Vector, Matrix, Quaternion, Euler
+
+
+def ortho6d_to_matrix(ortho6d):
+    """
+    Convert ortho6d rotation representation to 3x3 rotation matrix.
+
+    Args:
+        ortho6d: (6,) array - first 3 values are x axis, next 3 are y axis hint
+
+    Returns:
+        (3, 3) rotation matrix as numpy array
+    """
+    x_raw = ortho6d[:3]
+    y_raw = ortho6d[3:6]
+
+    # Normalize x
+    x = x_raw / (np.linalg.norm(x_raw) + 1e-8)
+
+    # z = cross(x, y_raw), then normalize
+    z = np.cross(x, y_raw)
+    z = z / (np.linalg.norm(z) + 1e-8)
+
+    # y = cross(z, x) - already normalized since z and x are orthonormal
+    y = np.cross(z, x)
+
+    return np.column_stack([x, y, z])
+
+
+def apply_pose_to_rest(armature_obj, pose, bones_idx_dict, parent_indices, input_meshes):
+    """
+    Apply MIA's pose prediction to transform skeleton from input pose to T-pose rest.
+
+    The pose data contains LOCAL rotations (relative to parent) that describe how each
+    bone is rotated from rest pose to input pose. We apply the INVERSE rotations
+    propagated through the kinematic chain to transform back to rest pose.
+
+    Args:
+        armature_obj: Blender armature object
+        pose: (num_bones, 6) array of ortho6d local rotations
+        bones_idx_dict: Mapping from bone names to indices
+        parent_indices: List of parent bone indices (-1 for root)
+        input_meshes: List of mesh objects to transform along with skeleton
+    """
+    if pose is None:
+        print("[MIA Export] No pose data - skipping pose-to-rest transformation")
+        return
+
+    if parent_indices is None:
+        print("[MIA Export] No kinematic tree - skipping pose-to-rest transformation")
+        return
+
+    print(f"[MIA Export] Applying pose-to-rest transformation with kinematic chain...")
+
+    # Convert ortho6d to rotation matrices for all bones
+    rot_matrices = {}
+    for name, idx in bones_idx_dict.items():
+        if idx < pose.shape[0]:
+            rot_matrices[name] = ortho6d_to_matrix(pose[idx])
+
+    # Apply inverse rotations in pose mode
+    # The rotations are LOCAL (relative to parent), so we apply them directly
+    # Blender handles the kinematic chain propagation
+    bpy.context.view_layer.objects.active = armature_obj
+    bpy.ops.object.mode_set(mode='POSE')
+
+    applied_count = 0
+    for bone_name, rot_matrix in rot_matrices.items():
+        pbone = armature_obj.pose.bones.get(bone_name)
+        if pbone is None:
+            print(f"[MIA Export] Warning: pose bone {bone_name} not found")
+            continue
+
+        # Convert to Blender Matrix (3x3)
+        blender_rot = Matrix([
+            [rot_matrix[0, 0], rot_matrix[0, 1], rot_matrix[0, 2]],
+            [rot_matrix[1, 0], rot_matrix[1, 1], rot_matrix[1, 2]],
+            [rot_matrix[2, 0], rot_matrix[2, 1], rot_matrix[2, 2]],
+        ])
+
+        # MIA's pose describes rotation FROM T-pose TO input pose
+        # To go FROM input pose TO T-pose, we need the INVERSE rotation
+        # For rotation matrices, inverse = transpose
+        inv_rot = blender_rot.transposed()
+
+        # Set the pose bone rotation in LOCAL space
+        pbone.rotation_mode = 'QUATERNION'
+        pbone.rotation_quaternion = inv_rot.to_quaternion()
+        applied_count += 1
+
+    bpy.ops.object.mode_set(mode='OBJECT')
+    print(f"[MIA Export] Applied inverse local rotations to {applied_count} bones")
+
+    # Update the view layer to propagate pose through kinematic chain
+    bpy.context.view_layer.update()
+
+    # Apply the posed armature as new rest pose
+    # First, apply armature modifier to meshes to bake the current deformation
+    for mesh_obj in input_meshes:
+        bpy.context.view_layer.objects.active = mesh_obj
+        for mod in mesh_obj.modifiers:
+            if mod.type == 'ARMATURE':
+                bpy.ops.object.modifier_apply(modifier=mod.name)
+                break
+        # Don't clear parent - keep relationship but modifier is applied
+
+    # Apply current pose as rest pose (bakes bone transforms into edit bones)
+    bpy.context.view_layer.objects.active = armature_obj
+    bpy.ops.object.mode_set(mode='POSE')
+    bpy.ops.pose.armature_apply(selected=False)
+    bpy.ops.object.mode_set(mode='OBJECT')
+
+    # Re-add armature modifier to meshes (vertex groups are preserved!)
+    for mesh_obj in input_meshes:
+        # Add new armature modifier pointing to our armature
+        mod = mesh_obj.modifiers.new(name="Armature", type='ARMATURE')
+        mod.object = armature_obj
+        mod.use_vertex_groups = True
+
+    # Clear any remaining pose transforms
+    bpy.ops.object.mode_set(mode='POSE')
+    bpy.ops.pose.select_all(action='SELECT')
+    bpy.ops.pose.transforms_clear()
+    bpy.ops.object.mode_set(mode='OBJECT')
+
+    print(f"[MIA Export] Skeleton transformed to rest pose")
 
 
 def parse_args():
@@ -96,6 +222,70 @@ def get_template_bone_data(armature_obj):
     return bone_data
 
 
+def compute_scale_transform(template_bone_data, mia_joints, bones_idx_dict):
+    """
+    Compute scale and offset to transform MIA joints to template scale.
+
+    MIA outputs normalized joints (roughly [-1, 1]).
+    Template is in centimeter scale (e.g., Hips at Y=104).
+
+    Returns:
+        scale: Scale factor to apply to MIA joints
+        offset: Offset to add after scaling
+    """
+    # Get reference points from template and MIA
+    hips_name = "mixamorig:Hips"
+    head_name = "mixamorig:Head"
+
+    if hips_name not in template_bone_data or head_name not in template_bone_data:
+        print("[MIA Export] Warning: Missing reference bones for scale computation")
+        return 1.0, np.array([0.0, 0.0, 0.0])
+
+    if hips_name not in bones_idx_dict or head_name not in bones_idx_dict:
+        print("[MIA Export] Warning: Missing reference bones in MIA output")
+        return 1.0, np.array([0.0, 0.0, 0.0])
+
+    # Template positions (in local Y-up space)
+    template_hips = np.array(template_bone_data[hips_name]['head'])
+    template_head = np.array(template_bone_data[head_name]['head'])
+    template_height = np.linalg.norm(template_head - template_hips)
+
+    # MIA positions
+    hips_idx = bones_idx_dict[hips_name]
+    head_idx = bones_idx_dict[head_name]
+    mia_hips = mia_joints[hips_idx]
+    mia_head = mia_joints[head_idx]
+    mia_height = np.linalg.norm(mia_head - mia_hips)
+
+    if mia_height < 0.001:
+        print("[MIA Export] Warning: MIA skeleton has near-zero height")
+        return 1.0, np.array([0.0, 0.0, 0.0])
+
+    # Compute scale
+    scale = template_height / mia_height
+
+    # Compute offset: position MIA hips at template hips after scaling
+    offset = template_hips - mia_hips * scale
+
+    print(f"[MIA Export] Scale transform: scale={scale:.3f}, offset=({offset[0]:.2f}, {offset[1]:.2f}, {offset[2]:.2f})")
+    print(f"[MIA Export] Template hips->head height: {template_height:.2f}")
+    print(f"[MIA Export] MIA hips->head height: {mia_height:.4f}")
+
+    return scale, offset
+
+
+def transform_joints_to_template_space(joints, joints_tail, scale, offset):
+    """
+    Transform MIA joints from normalized space to template scale.
+    """
+    transformed_joints = joints * scale + offset
+    transformed_tail = None
+    if joints_tail is not None:
+        transformed_tail = joints_tail * scale + offset
+
+    return transformed_joints, transformed_tail
+
+
 def apply_template_orientations(armature_obj, template_bone_data, bones_idx_dict):
     """
     Apply template bone rolls to MIA skeleton.
@@ -153,25 +343,20 @@ def set_rest_bones(armature_obj, head, tail, bones_idx_dict, template_bone_data=
     bpy.ops.object.mode_set(mode='EDIT')
 
     # First pass: update bones that are in the prediction dict
-    # Use template roll if provided, otherwise preserve original roll direction
+    # Use MIA's positions directly - this preserves correct skin weights relationship
     for bone in armature_obj.data.edit_bones:
         bone.use_connect = False
         if bone.name in bones_idx_dict:
             idx = bones_idx_dict[bone.name]
 
-            # Get template roll if available
-            template_roll = None
-            if template_bone_data and bone.name in template_bone_data:
-                template_roll = template_bone_data[bone.name]['roll']
-
-            # Update positions
+            # Set both head and tail from MIA (preserves correct weight mapping)
             bone.head = Vector(head[idx])
             if tail is not None:
                 bone.tail = Vector(tail[idx])
 
-            # Apply template roll to ensure Mixamo animation compatibility
-            if template_roll is not None:
-                bone.roll = template_roll
+            # Apply template roll for consistent twist axis
+            if template_bone_data and bone.name in template_bone_data:
+                bone.roll = template_bone_data[bone.name]['roll']
 
     # Second pass: remove end/leaf bones not in MIA's prediction dict
     # These are bones like HeadTop_End, *Thumb4, *Index4, etc.
@@ -310,6 +495,16 @@ def main():
         joints_tail_shape = data["joints_tail_shape"]
         joints_tail = np.fromfile(data["joints_tail_path"], dtype=np.float32).reshape(joints_tail_shape)
 
+    pose = None
+    if "pose_path" in data:
+        pose_shape = data["pose_shape"]
+        pose = np.fromfile(data["pose_path"], dtype=np.float32).reshape(pose_shape)
+        print(f"[MIA Export] Loaded pose data: {pose.shape}")
+
+    parent_indices = data.get("parent_indices")
+    if parent_indices:
+        print(f"[MIA Export] Loaded kinematic tree: {len(parent_indices)} bones")
+
     bones_idx_dict = data["bones_idx_dict"]
     mesh_path = data["mesh_path"]
 
@@ -327,15 +522,14 @@ def main():
         sys.exit(1)
 
     print(f"[MIA Export] Loaded template armature: {armature.name}")
+    print(f"[MIA Export] Template rotation: {[r for r in armature.rotation_euler]}")
 
-    # Capture template bone orientations BEFORE any modifications
-    # This data will be used to restore bone rolls after setting MIA positions
+    # Keep template's rotation (90° X) - this transforms Y-up local to Z-up world
+    # MIA joints are Y-up, so they match the template's local space directly
+
+    # Capture template bone orientations (in local/Y-up space)
     template_bone_data = get_template_bone_data(armature)
     print(f"[MIA Export] Captured orientations for {len(template_bone_data)} template bones")
-
-    # Reset armature to identity transform
-    # Both mesh and joints from MIA are in normalized space, so we work in that space
-    armature.matrix_world.identity()
 
     # Clear any pose transforms
     armature.animation_data_clear()
@@ -367,9 +561,6 @@ def main():
 
     print(f"[MIA Export] Loaded {len(input_meshes)} mesh(es) from input")
 
-    # Note: Both mesh and joints from MIA are in normalized space (approx [-1, 1])
-    # We don't apply any transforms - they should be consistent with each other
-
     # Remove template meshes (we use input mesh instead)
     template_meshes = get_meshes(template_objs)
     for mesh in template_meshes:
@@ -379,30 +570,45 @@ def main():
     if args["remove_fingers"]:
         remove_finger_bones(armature, bones_idx_dict)
 
-    # Transform joints from Y-up (MIA inference space) to Z-up (Blender space)
-    # The mesh GLB import already converts Y-up to Z-up, so we need to match
-    # Conversion: (x, y, z) -> (x, -z, y) (Y-up to Z-up, preserving handedness)
-    joints_blender = joints.copy()
-    joints_blender[:, 1], joints_blender[:, 2] = -joints[:, 2].copy(), joints[:, 1].copy()
+    # Transform MIA joints from normalized space to template scale
+    # MIA outputs Y-up joints in normalized [-1, 1] space
+    # Template bones are in centimeter scale (Hips at Y~104)
+    scale, offset = compute_scale_transform(template_bone_data, joints, bones_idx_dict)
+    joints_scaled, joints_tail_scaled = transform_joints_to_template_space(joints, joints_tail, scale, offset)
 
-    joints_tail_blender = None
-    if joints_tail is not None:
-        joints_tail_blender = joints_tail.copy()
-        joints_tail_blender[:, 1], joints_tail_blender[:, 2] = -joints_tail[:, 2].copy(), joints_tail[:, 1].copy()
-
-    # Update bone positions with template orientations for animation compatibility
-    set_rest_bones(armature, joints_blender, joints_tail_blender, bones_idx_dict,
-                   template_bone_data=template_bone_data, reset_as_rest=args["reset_to_rest"])
-
-    # Parent meshes to armature
+    # Scale input meshes to match template scale
+    # The mesh from MIA is in normalized space, same as joints
+    for mesh_obj in input_meshes:
+        mesh_obj.scale = (scale, scale, scale)
+        mesh_obj.location = Vector(offset)
+    # Apply transforms so the mesh data is in world space
+    bpy.ops.object.select_all(action='DESELECT')
     for mesh_obj in input_meshes:
         mesh_obj.select_set(True)
-    bpy.context.view_layer.objects.active = armature
-    bpy.ops.object.parent_set(type='ARMATURE')
+    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
     bpy.ops.object.select_all(action='DESELECT')
+    print(f"[MIA Export] Scaled mesh(es) to template scale")
 
-    # Apply weights
+    # Update bone positions with scaled joints and template rolls for animation compatibility
+    # Note: Don't use reset_as_rest here - pose transformation is handled separately
+    set_rest_bones(armature, joints_scaled, joints_tail_scaled, bones_idx_dict,
+                   template_bone_data=template_bone_data, reset_as_rest=False)
+
+    # Apply weights BEFORE parenting (so vertex groups exist)
     set_weights(input_meshes, bw, bones_idx_dict)
+
+    # Parent meshes to armature and add armature modifier
+    for mesh_obj in input_meshes:
+        # Set parent relationship
+        mesh_obj.parent = armature
+        # Add armature modifier
+        mod = mesh_obj.modifiers.new(name="Armature", type='ARMATURE')
+        mod.object = armature
+        mod.use_vertex_groups = True
+
+    # Apply pose-to-rest transformation if pose data is available
+    if pose is not None and args["reset_to_rest"]:
+        apply_pose_to_rest(armature, pose, bones_idx_dict, parent_indices, input_meshes)
 
     # Update scene before export
     bpy.context.view_layer.update()

@@ -337,7 +337,7 @@ class Exporter():
                 raise RuntimeError(f"FBX export completed but output file not found: {path}")
             else:
                 file_size = os.path.getsize(path)
-                print(f"[Exporter] ✓ FBX export successful: {path} ({file_size} bytes)")
+                print(f"[Exporter] [OK] FBX export successful: {path} ({file_size} bytes)")
 
         finally:
             # Clean up pickle file
