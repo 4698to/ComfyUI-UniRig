@@ -1,6 +1,15 @@
 # Environment manager (handles isolated environment and CUDA packages)
 comfy-env>=0.0.11
 
-# Note: All other dependencies are now in comfy-env.toml and installed
-# in the isolated environment. This file only contains the bootstrap
-# dependency needed to run install.py.
+# Base dependencies (needed by main ComfyUI process)
+huggingface_hub
+trimesh
+numpy
+scipy
+pillow
+python-box
+einops
+omegaconf
+addict
+timm
+tqdm
