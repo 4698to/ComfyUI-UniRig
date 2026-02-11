@@ -37506,12 +37506,20 @@ version 0.6.9
         }
         animate();
 
-        // Handle window resize
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
+        // Handle resize with proper container dimensions
+        function handleResize() {
+            const container = document.getElementById('viewerContainer');
+            const width = container ? container.clientWidth : window.innerWidth;
+            const height = container ? container.clientHeight : window.innerHeight;
+            if (width > 0 && height > 0) {
+                camera.aspect = width / height;
+                camera.updateProjectionMatrix();
+                renderer.setSize(width, height);
+            }
+        }
+
+        // Handle browser window resize
+        window.addEventListener('resize', handleResize);
 
         // Cleanup on page unload to prevent memory leaks
         window.addEventListener('beforeunload', () => {
@@ -38464,8 +38472,13 @@ version 0.6.9
                     console.log('[UniRig FBX Viewer] Stored filename:', currentFBXFilename);
                 }
                 loadFBX(event.data.filepath);
+            } else if (event.data.type === 'RESIZE') {
+                handleResize();
             }
         });
+
+        // Initial resize to handle iframe embedding
+        handleResize();
 
         // Notify parent that viewer is ready
         console.log('[UniRig FBX Viewer] Ready');

@@ -80,6 +80,68 @@ app.registerExtension({
                 };
                 window.addEventListener('message', onMessage.bind(this));
 
+                const notifyIframeResize = () => {
+                    if (iframe.contentWindow) {
+                        const rect = iframe.getBoundingClientRect();
+                        iframe.contentWindow.postMessage({
+                            type: 'RESIZE',
+                            width: rect.width,
+                            height: rect.height
+                        }, '*');
+                    }
+                };
+
+                this.onResize = function(size) {
+                    const isVueNodes = iframe.closest('[data-node-id]') !== null ||
+                                       document.querySelector('.vue-graph-canvas') !== null;
+
+                    if (!isVueNodes && size && size[1]) {
+                        const nodeHeight = size[1];
+                        const headerHeight = 70;
+                        const availableHeight = Math.max(200, nodeHeight - headerHeight);
+                        iframe.style.height = availableHeight + 'px';
+                    }
+
+                    requestAnimationFrame(() => {
+                        notifyIframeResize();
+                    });
+                };
+
+                let resizeTimeout = null;
+                let lastSize = { width: 0, height: 0 };
+                const resizeObserver = new ResizeObserver((entries) => {
+                    const entry = entries[0];
+                    const newWidth = entry.contentRect.width;
+                    const newHeight = entry.contentRect.height;
+
+                    if (Math.abs(newWidth - lastSize.width) < 1 && Math.abs(newHeight - lastSize.height) < 1) {
+                        return;
+                    }
+                    lastSize = { width: newWidth, height: newHeight };
+
+                    if (resizeTimeout) {
+                        clearTimeout(resizeTimeout);
+                    }
+                    resizeTimeout = setTimeout(() => {
+                        notifyIframeResize();
+                    }, 50);
+                });
+                resizeObserver.observe(iframe);
+
+                const originalOnRemoved = this.onRemoved;
+                this.onRemoved = function() {
+                    resizeObserver.disconnect();
+                    if (resizeTimeout) {
+                        clearTimeout(resizeTimeout);
+                    }
+                    if (iframe._blobUrl) {
+                        URL.revokeObjectURL(iframe._blobUrl);
+                    }
+                    if (originalOnRemoved) {
+                        originalOnRemoved.apply(this, arguments);
+                    }
+                };
+
                 // Set initial node size (taller to accommodate controls)
                 this.setSize([512, 768]);
 
