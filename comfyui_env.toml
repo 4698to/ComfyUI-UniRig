@@ -1,38 +1,7 @@
-[env]
-name = "unirig"
-python = "3.10"
-cuda = "auto"
+# This file is read by comfyui-envmanager.
+# Run: comfy-env install
 
-[packages]
-requirements = [
-    "trimesh",
-    "numpy",
-    "scipy",
-    "transformers==4.51.3",
-    "python-box",
-    "einops",
-    "omegaconf",
-    "pytorch_lightning",
-    "lightning",
-    "addict",
-    "timm",
-    "huggingface_hub",
-    "wandb",
-    "fast-simplification",
-    "pyrender",
-    "libigl",
-    "spconv-cu124",  # spconv only supports up to CUDA 12.4
-]
-
-no_deps = [
-    "torch-scatter==2.1.2",
-    "torch-cluster==1.6.3",
-]
-
-[sources]
-wheel_sources = [
-    "https://data.pyg.org/whl/torch-{torch_mm}+cu{cuda_short}.html",
-]
-index_urls = [
-    "https://pypi.org/simple/",
-]
+[cuda]
+torch-scatter = "2.1.2"
+torch-cluster = "1.6.3"
+spconv = "*"
