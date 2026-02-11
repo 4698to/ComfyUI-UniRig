@@ -1,6 +1,6 @@
 # Environment manager (handles isolated environment and CUDA packages)
 comfy-env>=0.1.8
-comfy-3d-viewers==0.2.0
+comfy-3d-viewers==0.2.1
 trimesh[easy]
 numpy
 scipy
