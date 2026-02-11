@@ -8,11 +8,99 @@ import zipfile
 import subprocess
 import shutil
 import sys
+import os
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 from .utils import InstallLogger, get_platform_info
 from .config import BLENDER_VERSION, BLENDER_BASE_URL
+
+# System libraries required by Blender on Linux
+LINUX_BLENDER_DEPS = [
+    ("libxi6", "libXi.so.6"),
+    ("libxxf86vm1", "libXxf86vm.so.1"),
+    ("libxfixes3", "libXfixes.so.3"),
+    ("libxrender1", "libXrender.so.1"),
+    ("libgl1", "libGL.so.1"),
+    ("libxkbcommon0", "libxkbcommon.so.0"),
+]
+
+
+def check_linux_dependencies() -> List[str]:
+    """
+    Check which Linux system libraries are missing for Blender.
+
+    Returns:
+        List of missing package names
+    """
+    import ctypes
+    import ctypes.util
+
+    missing = []
+    for pkg_name, lib_name in LINUX_BLENDER_DEPS:
+        # Try to find the library
+        lib_path = ctypes.util.find_library(lib_name.replace(".so", "").replace("lib", ""))
+        if lib_path is None:
+            # Also try direct load
+            try:
+                ctypes.CDLL(lib_name)
+            except OSError:
+                missing.append(pkg_name)
+
+    return missing
+
+
+def install_linux_dependencies() -> bool:
+    """
+    Install required system libraries for Blender on Linux.
+
+    Returns:
+        True if all dependencies are satisfied, False otherwise
+    """
+    platform_info = get_platform_info()
+    if platform_info["platform"] != "linux":
+        return True  # Not Linux, skip
+
+    missing = check_linux_dependencies()
+    if not missing:
+        InstallLogger.info("All Blender system dependencies are installed")
+        return True
+
+    InstallLogger.info(f"Missing system libraries: {', '.join(missing)}")
+    InstallLogger.info("Attempting to install via apt-get...")
+
+    try:
+        # Try to install with sudo
+        cmd = ["sudo", "apt-get", "install", "-y"] + missing
+        InstallLogger.info(f"Running: {' '.join(cmd)}")
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+
+        if result.returncode == 0:
+            InstallLogger.success("System dependencies installed successfully")
+            return True
+        else:
+            InstallLogger.warning(f"apt-get failed: {result.stderr}")
+            InstallLogger.warning("You may need to install manually:")
+            InstallLogger.warning(f"  sudo apt-get install -y {' '.join(missing)}")
+            return False
+
+    except subprocess.TimeoutExpired:
+        InstallLogger.warning("apt-get timed out")
+        return False
+    except FileNotFoundError:
+        InstallLogger.warning("apt-get not found (not a Debian-based system?)")
+        InstallLogger.warning("Please install these packages manually:")
+        InstallLogger.warning(f"  {', '.join(missing)}")
+        return False
+    except Exception as e:
+        InstallLogger.warning(f"Could not install system dependencies: {e}")
+        return False
 
 
 def get_blender_download_url(platform_name: str, architecture: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
@@ -200,6 +288,16 @@ def install_blender(target_dir: Path = None) -> Optional[str]:
     else:
         target_dir = Path(target_dir)
 
+    # Detect platform first (needed for system deps check)
+    platform_info = get_platform_info()
+    plat = platform_info["platform"]
+    arch = platform_info["arch"]
+
+    # Install system dependencies for Linux before anything else
+    if plat == "linux":
+        InstallLogger.info("Checking Blender system dependencies...")
+        install_linux_dependencies()
+
     # Check if Blender already installed
     blender_exe = find_blender_executable(target_dir)
     if blender_exe and blender_exe.exists():
@@ -207,11 +305,6 @@ def install_blender(target_dir: Path = None) -> Optional[str]:
         InstallLogger.info(f"  {blender_exe}")
         InstallLogger.info("Skipping download.")
         return str(blender_exe)
-
-    # Detect platform
-    platform_info = get_platform_info()
-    plat = platform_info["platform"]
-    arch = platform_info["arch"]
 
     if not plat or not arch:
         InstallLogger.error("Could not detect platform")

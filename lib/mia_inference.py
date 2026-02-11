@@ -20,11 +20,21 @@ import numpy as np
 import torch
 import trimesh
 
-# External MIA path (for inference functions that are complex to vendor)
-MIA_PATH = Path("/home/shadeform/Make-It-Animatable")
+# Get paths relative to this file (vendored within the repo)
+LIB_DIR = Path(__file__).parent.absolute()
+NODE_DIR = LIB_DIR.parent
 
 # MIA models directory (downloaded from HuggingFace)
-MIA_MODELS_DIR = MIA_PATH / "output/best/new"
+# Stored within the custom node directory: ComfyUI-UniRig/models/mia/
+# HuggingFace downloads to: {local_dir}/output/best/new/
+# Supports override via MIA_MODELS_PATH environment variable
+if os.environ.get('MIA_MODELS_PATH'):
+    MIA_MODELS_DIR = Path(os.environ['MIA_MODELS_PATH'])
+else:
+    MIA_MODELS_DIR = NODE_DIR / "models" / "mia" / "output" / "best" / "new"
+
+# MIA_PATH is the local_dir for HuggingFace downloads
+MIA_PATH = NODE_DIR / "models" / "mia"
 
 # Required model files
 MIA_MODEL_FILES = [
@@ -338,7 +348,10 @@ def _export_mia_fbx(
                     break
 
     if BLENDER_EXE is None:
-        raise RuntimeError("Blender not found. Install Blender 4.2+ or set UNIRIG_BLENDER_PATH")
+        raise RuntimeError(
+            "Blender not found. Run: python blender_install.py\n"
+            "Or set UNIRIG_BLENDER_PATH environment variable to your Blender executable."
+        )
 
     # Save mesh to temp file (can't pickle trimesh directly)
     temp_mesh_path = tempfile.NamedTemporaryFile(suffix=".glb", delete=False).name
@@ -356,10 +369,13 @@ def _export_mia_fbx(
     temp_json = os.path.join(temp_dir, "data.json")
     temp_bw = os.path.join(temp_dir, "bw.bin")
     temp_joints = os.path.join(temp_dir, "joints.bin")
+    temp_joints_tail = os.path.join(temp_dir, "joints_tail.bin")
 
     # Save arrays as raw binary
     data["bw"].astype(np.float32).tofile(temp_bw)
     data["joints"].astype(np.float32).tofile(temp_joints)
+    if data.get("joints_tail") is not None:
+        data["joints_tail"].astype(np.float32).tofile(temp_joints_tail)
 
     # Save metadata as JSON
     bones_idx_dict = dict(data["bones_idx_dict"])
@@ -371,6 +387,10 @@ def _export_mia_fbx(
         "joints_shape": list(data["joints"].shape),
         "bones_idx_dict": bones_idx_dict,
     }
+    if data.get("joints_tail") is not None:
+        json_data["joints_tail_path"] = temp_joints_tail
+        json_data["joints_tail_shape"] = list(data["joints_tail"].shape)
+
     with open(temp_json, 'w') as f:
         json.dump(json_data, f)
 
