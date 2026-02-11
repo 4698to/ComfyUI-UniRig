@@ -666,6 +666,8 @@ if vertices is not None:
             # Create material with nodes
             mat = bpy.data.materials.new(name=material_name_from_data)
             mat.use_nodes = True
+            mat.blend_method = 'OPAQUE'  # Prevent transparency
+            mat.shadow_method = 'OPAQUE'
 
             # Clear default nodes
             mat.node_tree.nodes.clear()
@@ -687,6 +689,7 @@ if vertices is not None:
             bsdf_node.inputs['Metallic'].default_value = 0.0  # Non-metallic
             bsdf_node.inputs['Roughness'].default_value = 0.8  # Fairly rough/matte
             bsdf_node.inputs['Specular IOR Level'].default_value = 0.3  # Reduced specular
+            bsdf_node.inputs['Alpha'].default_value = 1.0  # Fully opaque
 
             # Create output node
             output_node = nodes.new(type='ShaderNodeOutputMaterial')
