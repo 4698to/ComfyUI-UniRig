@@ -1,8 +1,8 @@
 """ComfyUI-UniRig Prestartup Script."""
 
 from pathlib import Path
-from comfy_env import setup_env
-from comfy_3d_viewers import copy_viewer, copy_files
+from comfy_env import setup_env, copy_files
+from comfy_3d_viewers import copy_viewer
 
 setup_env()
 
