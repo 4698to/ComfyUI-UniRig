@@ -1,5 +1,5 @@
 # Environment manager (handles isolated environment and CUDA packages)
-comfy-env>=0.0.19
+comfy-env==0.0.45
 
 # Shared 3D viewers (FBX viewer components)
 comfy-3d-viewers>=0.1.0
