@@ -24,6 +24,18 @@ def main():
     print("[UniRig Install] ComfyUI-UniRig Installation", flush=True)
     print("=" * 60, flush=True)
     print(flush=True)
+
+    # First, ensure comfyui-envmanager is installed
+    try:
+        import comfyui_envmanager
+    except ImportError:
+        print("Installing comfyui-envmanager...", flush=True)
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "comfyui-envmanager"],
+            check=False
+        )
+        print(flush=True)
+
     print("Installing CUDA dependencies via comfyui-envmanager...", flush=True)
     print(flush=True)
 
