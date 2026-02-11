@@ -15,7 +15,7 @@ import folder_paths
 MESH_INFO_TIMEOUT = 30  # seconds
 
 try:
-    from ..base import (
+    from .base import (
         BLENDER_PARSE_SKELETON,
         BLENDER_EXTRACT_MESH_INFO,
         NODE_DIR,

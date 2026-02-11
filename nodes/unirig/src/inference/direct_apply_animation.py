@@ -5,13 +5,14 @@ This module provides the same functionality as blender_apply_animation.py but as
 direct Python import, eliminating the need for subprocess calls to Blender.
 
 Requires: bpy>=4.0.0 (installed via pip install bpy)
+
+IMPORTANT: bpy and mathutils are imported lazily inside functions to avoid
+conflicts with torch_cluster. Do NOT add module-level bpy imports.
 """
 
-import bpy
 import os
 import io
 import tempfile
-from mathutils import Matrix, Vector, Quaternion
 
 try:
     from PIL import Image
@@ -32,6 +33,10 @@ def apply_mixamo_animation(model_fbx: str, animation_fbx: str, output_fbx: str) 
     Returns:
         Path to the exported FBX file
     """
+    # Lazy imports to avoid torch_cluster conflict
+    import bpy
+    from mathutils import Matrix, Vector, Quaternion
+
     print(f"[Direct Apply Animation] Model FBX: {model_fbx}")
     print(f"[Direct Apply Animation] Animation FBX: {animation_fbx}")
     print(f"[Direct Apply Animation] Output FBX: {output_fbx}")
@@ -159,6 +164,8 @@ def apply_mixamo_animation(model_fbx: str, animation_fbx: str, output_fbx: str) 
 
 def _clean_scene():
     """Remove all objects from scene."""
+    import bpy  # Lazy import
+
     bpy.ops.object.select_all(action='SELECT')
     bpy.ops.object.delete()
     for c in bpy.data.armatures:
@@ -181,6 +188,8 @@ def _check_mixamo_prefix(bone_names):
 
 def _apply_direct_copy(model_armature, anim_armature, anim_action, model_meshes, output_fbx):
     """Apply animation using direct action copy (identical skeletons)."""
+    import bpy  # Lazy import
+
     print(f"[Direct Apply Animation] Using DIRECT action copy (identical skeletons)...")
 
     # Ensure model has animation data
@@ -217,6 +226,8 @@ def _apply_direct_copy(model_armature, anim_armature, anim_action, model_meshes,
 
 def _apply_partial_copy(model_armature, anim_armature, anim_action, matching_bones, model_meshes, output_fbx):
     """Apply animation using partial F-curve copy (different skeleton structures)."""
+    import bpy  # Lazy import
+
     print(f"[Direct Apply Animation] Using PARTIAL action copy ({len(matching_bones)} matching bones)...")
 
     # Ensure model has animation data
@@ -270,6 +281,8 @@ def _apply_partial_copy(model_armature, anim_armature, anim_action, matching_bon
 
 def _export_fbx(model_armature, model_meshes, output_fbx):
     """Export the animated model to FBX."""
+    import bpy  # Lazy import
+
     print(f"[Direct Apply Animation] Exporting animated FBX...")
     os.makedirs(os.path.dirname(output_fbx) if os.path.dirname(output_fbx) else '.', exist_ok=True)
 

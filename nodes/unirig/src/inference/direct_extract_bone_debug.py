@@ -5,11 +5,12 @@ This module provides bone debugging information for the UniRig View Rigging node
 Uses the same direct bpy import pattern as direct_export_fbx.py.
 
 Requires: bpy>=4.0.0 (installed via pip install bpy)
+
+IMPORTANT: bpy and mathutils are imported lazily inside functions to avoid
+conflicts with torch_cluster. Do NOT add module-level bpy imports.
 """
 
-import bpy
 import math
-from mathutils import Vector, Matrix, Euler
 
 
 def extract_bone_debug(fbx_path: str) -> dict:
@@ -26,6 +27,10 @@ def extract_bone_debug(fbx_path: str) -> dict:
             - 'bone_count': total number of bones
             - 'has_mesh': whether a mesh was found
     """
+    # Lazy imports to avoid torch_cluster conflict
+    import bpy
+    from mathutils import Vector, Matrix, Euler
+
     print(f"[Direct Bone Debug] Loading FBX: {fbx_path}")
 
     # Clean scene first
@@ -146,6 +151,8 @@ def extract_bone_debug(fbx_path: str) -> dict:
 
 def _clean_bpy():
     """Clean the Blender scene."""
+    import bpy  # Lazy import
+
     for c in bpy.data.actions:
         bpy.data.actions.remove(c)
     for c in bpy.data.armatures:
@@ -168,6 +175,8 @@ def _clean_bpy():
 
 def _has_mesh() -> bool:
     """Check if scene contains any mesh objects."""
+    import bpy  # Lazy import
+
     for obj in bpy.data.objects:
         if obj.type == 'MESH':
             return True

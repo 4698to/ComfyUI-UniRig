@@ -22,13 +22,8 @@ def export_posed_fbx(input_fbx: str, output_fbx: str, bone_transforms: dict) -> 
     Raises:
         RuntimeError: If bpy is not available or export fails
     """
-    try:
-        import bpy
-        from mathutils import Vector, Quaternion
-    except ImportError:
-        raise RuntimeError(
-            "bpy module not available. Make sure you're running in the unirig isolated environment."
-        )
+    import bpy
+    from mathutils import Vector, Quaternion
 
     print(f"[DirectPosedFBX] Input FBX: {input_fbx}")
     print(f"[DirectPosedFBX] Output FBX: {output_fbx}")

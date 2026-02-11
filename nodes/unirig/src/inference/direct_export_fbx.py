@@ -5,11 +5,12 @@ This module provides the same functionality as blender_export_fbx.py but as a
 direct Python import, eliminating the need for subprocess calls to Blender.
 
 Requires: bpy>=4.0.0 (installed via pip install bpy)
+
+IMPORTANT: bpy and mathutils are imported lazily inside functions to avoid
+conflicts with torch_cluster. Do NOT add module-level bpy imports.
 """
 
-import bpy
 import numpy as np
-from mathutils import Vector, Matrix, Quaternion
 from collections import defaultdict
 import math
 import tempfile
@@ -63,6 +64,10 @@ def export_rigged_fbx(
     Returns:
         Path to the exported FBX file
     """
+    # Lazy imports to avoid torch_cluster conflict
+    import bpy
+    from mathutils import Vector, Matrix, Quaternion
+
     print(f"[Direct FBX Export] Input joints: {joints.shape}")
     print(f"[Direct FBX Export] Output: {output_fbx}")
 
@@ -287,6 +292,8 @@ def export_rigged_fbx(
 
 def _clean_bpy():
     """Clean the Blender scene."""
+    import bpy  # Lazy import
+
     for c in bpy.data.actions:
         bpy.data.actions.remove(c)
     for c in bpy.data.armatures:
@@ -309,6 +316,8 @@ def _clean_bpy():
 
 def _extrude_bone(edit_bones, name, parent_name, head, tail, connect):
     """Create a new bone."""
+    from mathutils import Vector  # Lazy import
+
     bone = edit_bones.new(name)
     bone.head = Vector((head[0], head[1], head[2]))
     bone.tail = Vector((tail[0], tail[1], tail[2]))
@@ -664,6 +673,8 @@ def _normalize_mixamo(joints, tails, vertices, skin, names):
 
 def _apply_texture(obj, texture_data_base64, material_name):
     """Apply texture to mesh object."""
+    import bpy  # Lazy import
+
     print(f"[Direct FBX Export] Creating textured material...")
     try:
         # Ensure material_name is not None
@@ -724,6 +735,8 @@ def _apply_texture(obj, texture_data_base64, material_name):
 
 def _fix_mixamo_bone_orientations(edit_bones, names):
     """Fix bone orientations for Mixamo compatibility."""
+    from mathutils import Vector  # Lazy import
+
     print("[Direct FBX Export] Fixing bone orientations for Mixamo...")
 
     DEFAULT_BONE_LENGTH = 5.0

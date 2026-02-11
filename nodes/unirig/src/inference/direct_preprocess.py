@@ -5,9 +5,11 @@ This module provides the same functionality as blender_extract.py but as a
 direct Python import, eliminating the need for subprocess calls to Blender.
 
 Requires: bpy>=4.0.0 (installed via pip install bpy)
+
+IMPORTANT: bpy is imported lazily inside functions to avoid
+conflicts with torch_cluster. Do NOT add module-level bpy imports.
 """
 
-import bpy
 import numpy as np
 from pathlib import Path
 import base64
@@ -43,6 +45,9 @@ def preprocess_mesh(
     Returns:
         dict with mesh data (vertices, faces, normals, etc.)
     """
+    # Lazy import to avoid torch_cluster conflict
+    import bpy
+
     print(f"[Direct Preprocess] Input: {input_file}")
     print(f"[Direct Preprocess] Output: {output_npz}")
     print(f"[Direct Preprocess] Target faces: {target_face_count}")

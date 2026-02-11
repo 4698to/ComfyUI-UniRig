@@ -3,27 +3,37 @@ Make-It-Animatable inference wrapper.
 
 Provides functions to load MIA models and run inference for humanoid rigging.
 Uses vendored MIA code from lib/mia/ for model loading (no bpy dependency).
+
+IMPORTANT: All heavy imports (bpy, numpy, torch, trimesh) are lazy-loaded inside
+functions to ensure torch_cluster (via mia/model.py) loads BEFORE bpy initializes
+its bundled libraries. This avoids a segfault caused by library conflicts.
 """
 
 import os
 import sys
 from pathlib import Path
-from typing import Dict, Any, Optional
-from unittest.mock import MagicMock
+from typing import Dict, Any, Optional, TYPE_CHECKING
 
-# Try to import bpy directly (works in isolated _env_unirig with Blender 4.2 as Python module)
-# Only mock if bpy is truly unavailable (inference-only mode without Blender)
-try:
-    import bpy
-    _HAS_BPY = True
-except ImportError:
-    from unittest.mock import MagicMock
-    sys.modules['bpy'] = MagicMock()
-    _HAS_BPY = False
+# Type hints only - not imported at runtime
+if TYPE_CHECKING:
+    import numpy as np
+    import torch
+    import trimesh
 
-import numpy as np
-import torch
-import trimesh
+# Lazy bpy availability check (don't import at module level!)
+_HAS_BPY: Optional[bool] = None
+
+
+def _check_bpy_available() -> bool:
+    """Lazily check if bpy is available. Called only when needed."""
+    global _HAS_BPY
+    if _HAS_BPY is None:
+        try:
+            import bpy  # noqa: F401
+            _HAS_BPY = True
+        except ImportError:
+            _HAS_BPY = False
+    return _HAS_BPY
 
 # Get paths relative to this file
 UTILS_DIR = Path(__file__).parent.absolute()
@@ -109,6 +119,8 @@ def load_mia_models(cache_to_gpu: bool = True) -> str:
     Returns:
         Cache key string (models stay in worker, can't be pickled to host).
     """
+    import torch  # Lazy import - loads torch_cluster via mia/ BEFORE bpy
+
     global _MIA_MODEL_CACHE
 
     cache_key = f"mia_models_gpu={cache_to_gpu}"
@@ -230,7 +242,7 @@ def get_cached_models(cache_key: str) -> Dict[str, Any]:
 
 
 def run_mia_inference(
-    mesh: trimesh.Trimesh,
+    mesh: "trimesh.Trimesh",
     models: Dict[str, Any],
     output_path: str,
     no_fingers: bool = True,
@@ -251,6 +263,9 @@ def run_mia_inference(
     Returns:
         Path to output FBX file.
     """
+    import numpy as np  # Lazy import
+    import folder_paths  # Lazy import
+
     # Use vendored pipeline from lib/mia
     if str(LIB_DIR) not in sys.path:
         sys.path.insert(0, str(LIB_DIR))
@@ -384,6 +399,8 @@ def _export_mia_fbx_direct(
     Export MIA results to FBX using bpy directly (inlined, no imports needed).
     """
     import tempfile
+    import numpy as np  # Lazy import
+    import bpy  # Lazy import - only imported here AFTER torch_cluster loaded
     from mathutils import Vector, Matrix
 
     mesh = data["mesh"]
@@ -698,6 +715,8 @@ def _export_mia_fbx_direct(
 
 def _apply_pose_to_rest_inline(armature_obj, pose, bones_idx_dict, parent_indices, input_meshes, mia_joints, template_bone_data=None):
     """Apply MIA's pose prediction to transform skeleton from input pose to T-pose rest (inlined)."""
+    import numpy as np  # Lazy import
+    import bpy  # Lazy import
     from mathutils import Matrix
 
     def ortho6d_to_matrix(ortho6d):
@@ -843,7 +862,7 @@ def _export_mia_fbx(
         else:
             raise FileNotFoundError(f"No Mixamo template found. Expected at: {template_path}")
 
-    if _HAS_BPY:
+    if _check_bpy_available():
         # Use bpy directly (preferred - no subprocess needed)
         print("[MIA] Using bpy directly for FBX export...")
         _export_mia_fbx_direct(data, output_path, remove_fingers, reset_to_rest, template_path)

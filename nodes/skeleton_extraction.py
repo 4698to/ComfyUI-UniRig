@@ -16,7 +16,7 @@ import folder_paths
 TARGET_FACE_COUNT = 50000  # default for mesh decimation
 
 try:
-    from ..base import (
+    from .base import (
         UNIRIG_PATH,
         UNIRIG_MODELS_DIR,
         LIB_DIR,

@@ -18,7 +18,7 @@ def _get_box():
 
 # Support both relative imports (ComfyUI) and absolute imports (testing)
 try:
-    from ..base import UNIRIG_PATH, UNIRIG_MODELS_DIR, LIB_DIR
+    from .base import UNIRIG_PATH, UNIRIG_MODELS_DIR, LIB_DIR
 except ImportError:
     from base import UNIRIG_PATH, UNIRIG_MODELS_DIR, LIB_DIR
 
