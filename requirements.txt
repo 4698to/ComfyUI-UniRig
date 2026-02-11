@@ -1,15 +1,26 @@
 # Environment manager (handles isolated environment and CUDA packages)
 comfy-env>=0.0.12
 
-# Base dependencies (needed by main ComfyUI process)
-huggingface_hub
+# Core 3D processing
 trimesh
 numpy
 scipy
-pillow
-python-box
-einops
-omegaconf
-addict
+pyrender
+
+# UniRig ML dependencies
+transformers==4.51.3
+pytorch-lightning
+lightning
 timm
-tqdm
+einops
+addict
+
+# Configuration
+omegaconf
+python-box
+
+# HuggingFace
+huggingface-hub
+
+# Mesh processing
+fast-simplification
