@@ -1,29 +1,6 @@
-# Environment manager (handles CUDA wheel resolution)
-comfyui-envmanager
+# Environment manager (handles isolated environment and CUDA packages)
+comfy-env>=0.0.11
 
-# Core dependencies
-trimesh
-numpy
-scipy
-
-# UniRig dependencies
-transformers==4.51.3
-python-box
-einops
-omegaconf
-pytorch_lightning
-lightning
-addict
-timm
-huggingface_hub
-wandb
-fast-simplification
-
-# Mesh processing
-# open3d  # Optional - not needed for Python 3.13+, we use trimesh instead
-pyrender
-libigl
-
-# Note: bpy is no longer needed - we use bundled Blender instead
-# Note: torch-cluster, torch-scatter, and spconv are installed via: comfy-env install
-# Note: flash_attn is optional and can be added to comfyui_env.toml if needed
+# Note: All other dependencies are now in comfy-env.toml and installed
+# in the isolated environment. This file only contains the bootstrap
+# dependency needed to run install.py.

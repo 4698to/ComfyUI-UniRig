@@ -5,83 +5,21 @@ UniRig integration for ComfyUI - State-of-the-art automatic rigging and skeleton
 
 Based on: One Model to Rig Them All (SIGGRAPH 2025)
 Repository: https://github.com/VAST-AI-Research/UniRig
+
+Dependencies are managed via comfy-env isolated environment.
+Run: python install.py
 """
 
 import os
 import sys
-import subprocess
 import traceback
 
 # Track initialization status
 INIT_SUCCESS = False
 INIT_ERRORS = []
 
-
-def _ensure_critical_deps():
-    """
-    Ensure critical dependencies are installed before importing nodes.
-    This handles the case where ComfyUI loads the node before install.py runs.
-
-    Respects UNIRIG_SKIP_INSTALL env var for Docker/containerized deployments
-    where users manage dependencies themselves.
-    """
-    # Check if auto-install is disabled (for Docker/containerized deployments)
-    if os.environ.get('UNIRIG_SKIP_INSTALL', '').lower() in ('1', 'true', 'yes'):
-        print("[ComfyUI-UniRig] UNIRIG_SKIP_INSTALL is set - skipping auto-install")
-        return True
-
-    critical_deps = [
-        ("box", "python-box"),  # (import_name, pip_name)
-        ("trimesh", "trimesh"),
-        ("numpy", "numpy"),
-    ]
-
-    for import_name, pip_name in critical_deps:
-        try:
-            __import__(import_name)
-        except ImportError:
-            print(f"[ComfyUI-UniRig] Missing {pip_name}, installing...")
-            try:
-                subprocess.check_call([
-                    sys.executable, "-m", "pip", "install", pip_name
-                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                print(f"[ComfyUI-UniRig] Installed {pip_name}")
-            except subprocess.CalledProcessError:
-                print(f"[ComfyUI-UniRig] [ERROR] Failed to install {pip_name}")
-                return False
-
-    return True
-
 # Set web directory for JavaScript extensions (FBX viewer widget)
 WEB_DIRECTORY = "./web"
-
-def _check_optional_dependencies():
-    """Check for optional dependencies and warn about missing ones."""
-    missing = []
-
-    try:
-        import spconv
-    except ImportError:
-        missing.append(("spconv", "pip install spconv-cu121  # Match your CUDA version"))
-
-    try:
-        import torch_scatter
-    except ImportError:
-        missing.append(("torch-scatter", "pip install torch-scatter"))
-
-    try:
-        import torch_cluster
-    except ImportError:
-        missing.append(("torch-cluster", "pip install torch-cluster"))
-
-    if missing:
-        print("[ComfyUI-UniRig] WARNING: Missing optional dependencies for GPU model caching:")
-        for name, install_cmd in missing:
-            print(f"  - {name}: {install_cmd}")
-        print("[ComfyUI-UniRig] GPU-accelerated inference will not be available until these are installed.")
-        print("[ComfyUI-UniRig] Run 'python install.py' to install dependencies.")
-
-    return len(missing) == 0
 
 
 # Only skip initialization when pytest is actually running tests
@@ -91,9 +29,6 @@ _RUNNING_TESTS = os.environ.get('PYTEST_CURRENT_TEST') is not None
 
 if not _RUNNING_TESTS:
     print("[ComfyUI-UniRig] Initializing custom node...")
-
-    # Ensure critical dependencies are installed first
-    _ensure_critical_deps()
 
     # Import node classes
     try:
@@ -129,10 +64,6 @@ if not _RUNNING_TESTS:
         # Set to empty if import failed
         NODE_CLASS_MAPPINGS = {}
         NODE_DISPLAY_NAME_MAPPINGS = {}
-
-    # Check optional dependencies (only if main import succeeded)
-    if INIT_SUCCESS:
-        _check_optional_dependencies()
 
     # Add static route for Three.js and other libraries
     try:

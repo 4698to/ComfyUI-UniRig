@@ -1,0 +1,43 @@
+# ComfyUI-UniRig - Environment Configuration
+# Run: comfy-env install
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ISOLATED ENVIRONMENT
+# ═══════════════════════════════════════════════════════════════════════════════
+
+[unirig]
+python = "3.11"
+cuda_version = "auto"      # Auto-detect from system
+pytorch_version = "auto"   # Auto-detect compatible version
+
+    [unirig.cuda]
+    # CUDA extensions - resolved automatically by comfy-env
+    torch-scatter = "2.1.2"
+    torch-cluster = "1.6.3"
+    spconv-cu126 = "*"
+    flash-attn = "2.8.3"
+
+    [unirig.packages]
+    requirements = [
+        # Core
+        "trimesh",
+        "numpy",
+        "scipy",
+
+        # UniRig dependencies
+        "transformers==4.51.3",
+        "python-box",
+        "einops",
+        "omegaconf",
+        "pytorch_lightning",
+        "lightning",
+        "addict",
+        "timm",
+        "huggingface_hub",
+        "wandb",
+        "fast-simplification",
+
+        # Mesh processing
+        "pyrender",
+        "libigl",
+    ]

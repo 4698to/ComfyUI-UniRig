@@ -1,85 +1,220 @@
+#!/usr/bin/env python3
 """
-Installation script for ComfyUI-UniRig.
+Installation script for ComfyUI-UniRig with isolated environment.
 
-CUDA dependencies (torch-scatter, torch-cluster, spconv) are now handled by
-comfyui-envmanager. Run `comfy-env install` in this directory to install them.
+This script sets up an isolated Python virtual environment with all dependencies
+required for UniRig. The environment is completely isolated from
+ComfyUI's main environment, preventing any dependency conflicts.
 
-This script now only handles Blender installation for backwards compatibility.
+Uses comfy-env package for environment management.
 """
 
 import sys
 import os
+import platform
+import subprocess
+from pathlib import Path
 
-# Ensure installer package is importable
-_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if _SCRIPT_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPT_DIR)
 
+# =============================================================================
+# VC++ Redistributable Check (Windows only)
+# =============================================================================
+
+VCREDIST_URL = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+
+
+def check_vcredist_installed():
+    """Check if VC++ Redistributable DLLs are actually present on the system."""
+    if platform.system() != "Windows":
+        return True  # Not needed on non-Windows
+
+    required_dlls = ['vcruntime140.dll', 'msvcp140.dll']
+
+    # Search locations in order of preference
+    search_paths = []
+
+    # 1. System directory (most reliable)
+    system_root = os.environ.get('SystemRoot', r'C:\Windows')
+    search_paths.append(os.path.join(system_root, 'System32'))
+
+    # 2. Python environment directories
+    if hasattr(sys, 'base_prefix'):
+        search_paths.append(os.path.join(sys.base_prefix, 'Library', 'bin'))
+        search_paths.append(os.path.join(sys.base_prefix, 'DLLs'))
+    if hasattr(sys, 'prefix') and sys.prefix != getattr(sys, 'base_prefix', sys.prefix):
+        search_paths.append(os.path.join(sys.prefix, 'Library', 'bin'))
+        search_paths.append(os.path.join(sys.prefix, 'DLLs'))
+
+    # Check each required DLL
+    for dll in required_dlls:
+        found = False
+        for search_path in search_paths:
+            dll_path = os.path.join(search_path, dll)
+            if os.path.exists(dll_path):
+                found = True
+                break
+        if not found:
+            return False
+
+    return True
+
+
+def install_vcredist():
+    """Download and install VC++ Redistributable with UAC elevation."""
+    import urllib.request
+    import tempfile
+
+    print("[UniRig] Downloading VC++ Redistributable...")
+
+    # Download to temp file
+    temp_path = os.path.join(tempfile.gettempdir(), "vc_redist.x64.exe")
+    try:
+        urllib.request.urlretrieve(VCREDIST_URL, temp_path)
+    except Exception as e:
+        print(f"[UniRig] Failed to download VC++ Redistributable: {e}")
+        print(f"[UniRig] Please download manually from: {VCREDIST_URL}")
+        return False
+
+    print("[UniRig] Installing VC++ Redistributable (UAC prompt may appear)...")
+
+    # Run with elevation - /passive shows progress, /quiet is fully silent
+    try:
+        result = subprocess.run(
+            [temp_path, '/install', '/passive', '/norestart'],
+            capture_output=True
+        )
+    except Exception as e:
+        print(f"[UniRig] Failed to run installer: {e}")
+        print(f"[UniRig] Please run manually: {temp_path}")
+        return False
+
+    # Clean up
+    try:
+        os.remove(temp_path)
+    except:
+        pass
+
+    if result.returncode == 0:
+        print("[UniRig] VC++ Redistributable installer completed.")
+    elif result.returncode == 1638:
+        # 1638 = newer version already installed
+        print("[UniRig] VC++ Redistributable already installed (newer version)")
+    else:
+        print(f"[UniRig] Installation returned code {result.returncode}")
+        print(f"[UniRig] Please install manually from: {VCREDIST_URL}")
+        return False
+
+    # Verify DLLs are actually present after installation
+    if check_vcredist_installed():
+        print("[UniRig] VC++ Redistributable DLLs verified!")
+        return True
+    else:
+        print("[UniRig] Installation completed but DLLs not found in expected locations.")
+        print("[UniRig] You may need to restart your system or terminal.")
+        return False
+
+
+def ensure_vcredist():
+    """Check and install VC++ Redistributable if needed (Windows only)."""
+    if platform.system() != "Windows":
+        return True
+
+    if check_vcredist_installed():
+        print("[UniRig] VC++ Redistributable: OK (DLLs found)")
+        return True
+
+    print("[UniRig] VC++ Redistributable DLLs not found - attempting automatic install...")
+
+    if install_vcredist():
+        return True
+
+    # Fallback: provide clear manual instructions
+    print("")
+    print("=" * 70)
+    print("[UniRig] MANUAL INSTALLATION REQUIRED")
+    print("=" * 70)
+    print("")
+    print("  The automatic installation of VC++ Redistributable failed.")
+    print("  This is required for PyTorch CUDA and other native extensions.")
+    print("")
+    print("  Please download and install manually:")
+    print(f"    {VCREDIST_URL}")
+    print("")
+    print("  After installation, restart your terminal and try again.")
+    print("=" * 70)
+    print("")
+    return False
+
+
+# =============================================================================
+# Main Installation
+# =============================================================================
 
 def main():
-    """Main installation routine - runs comfy-env install."""
-    import subprocess
-
-    print("=" * 60, flush=True)
-    print("[UniRig Install] ComfyUI-UniRig Installation", flush=True)
-    print("=" * 60, flush=True)
-    print(flush=True)
-
-    # First, ensure comfyui-envmanager is installed
-    try:
-        import comfyui_envmanager
-    except ImportError:
-        print("Installing comfyui-envmanager...", flush=True)
-        subprocess.run(
-            [sys.executable, "-m", "pip", "install", "comfyui-envmanager>=0.0.8"],
-            check=False
-        )
-        print(flush=True)
-
-    # Check if torch is available (required for wheel resolution)
-    try:
-        import torch
-        print(f"Found PyTorch {torch.__version__}", flush=True)
-    except ImportError:
-        print("[UniRig Install] WARNING: PyTorch not found. CUDA wheels require PyTorch.", flush=True)
-        print("[UniRig Install] Install PyTorch first, then run: comfy-env install", flush=True)
-        return 1
-
-    print("Installing CUDA dependencies via comfyui-envmanager...", flush=True)
-    print(flush=True)
-
-    # Run comfy-env install directly (not subprocess, to share torch import)
-    try:
-        # Change to script directory for config discovery
-        original_cwd = os.getcwd()
-        os.chdir(_SCRIPT_DIR)
-
-        from comfyui_envmanager.cli import main as comfy_env_main
-        result = comfy_env_main(["install"])
-
-        os.chdir(original_cwd)
-        returncode = result if isinstance(result, int) else 0
-    except Exception as e:
-        print(f"[UniRig Install] Error: {e}")
-        returncode = 1
-
-    print(flush=True)
-    if returncode == 0:
-        print("[UniRig Install] CUDA dependencies installed successfully!")
-    else:
-        print("[UniRig Install] CUDA installation failed. Try running manually:")
-        print("  comfy-env install")
-
-    print()
-    print("To install Blender (for FBX export):")
-    print("  python blender_install.py")
-    print()
+    """Main installation function."""
+    print("\n" + "=" * 60)
+    print("ComfyUI-UniRig Installation (Isolated Environment)")
     print("=" * 60)
 
-    return returncode
+    # Check VC++ Redistributable first (required for PyTorch CUDA and native extensions)
+    if not ensure_vcredist():
+        print("[UniRig] WARNING: VC++ Redistributable installation failed.")
+        print("[UniRig] Some features may not work. Continuing anyway...")
+
+    from comfy_env import IsolatedEnvManager, discover_config
+
+    node_root = Path(__file__).parent.absolute()
+
+    # Load environment config from comfy-env.toml
+    config = discover_config(node_root)
+    if config is None:
+        print("[UniRig] ERROR: Could not find comfy-env.toml")
+        return 1
+
+    # Get the unirig isolated environment
+    if "unirig" not in config.envs:
+        print("[UniRig] ERROR: No 'unirig' environment defined in config")
+        return 1
+
+    env_config = config.envs["unirig"]
+
+    print(f"[UniRig] Loaded config: {env_config.name}")
+    print(f"[UniRig]   CUDA: {env_config.cuda}")
+    print(f"[UniRig]   PyTorch: {env_config.pytorch_version}")
+    print(f"[UniRig]   Requirements: {len(env_config.requirements)} packages")
+    print(f"[UniRig]   CUDA packages: {len(env_config.no_deps_requirements)} packages")
+
+    # Create environment manager
+    def log(msg):
+        print(f"[UniRig] {msg}")
+
+    manager = IsolatedEnvManager(base_dir=node_root, log_callback=log)
+
+    # Check if already ready
+    if manager.is_ready(env_config, verify_packages=["torch", "torch_scatter"]):
+        env_dir = manager.get_env_dir(env_config)
+        print("[UniRig] Isolated environment already exists and is ready!")
+        print(f"[UniRig] Location: {env_dir}")
+        print("[UniRig] To reinstall, delete the environment directory.")
+        return 0
+
+    # Setup environment
+    try:
+        manager.setup(env_config, verify_packages=["torch", "torch_scatter"])
+        print("\n" + "=" * 60)
+        print("[UniRig] Installation completed successfully!")
+        print("=" * 60)
+        return 0
+    except Exception as e:
+        print(f"\n[UniRig] Installation FAILED: {e}")
+        print("[UniRig] Report issues at: https://github.com/PozzettiAndrea/ComfyUI-UniRig/issues")
+        return 1
 
 
-# Legacy exports for backwards compatibility with nodes/base.py
+# =============================================================================
+# Legacy exports for backwards compatibility
+# =============================================================================
+
 def find_blender_executable(blender_dir):
     """Find the blender executable in the extracted directory."""
     from installer.blender import find_blender_executable as _find_blender_executable
