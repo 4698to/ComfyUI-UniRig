@@ -1,5 +1,0 @@
-# Development dependencies for testing
-pytest>=7.0
-pillow
-trimesh
-playwright>=1.40.0

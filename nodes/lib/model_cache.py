@@ -14,6 +14,7 @@ import lightning as L
 import yaml
 from box import Box
 import numpy as np
+from safetensors.torch import load_file as load_safetensors
 
 # Add UniRig to path
 LIB_DIR = Path(__file__).parent.resolve()
@@ -136,13 +137,20 @@ def load_model_into_memory(model_type: str, task_config_path: str, cache_to_gpu:
         # Load checkpoint weights into system
         if checkpoint_path and system is not None:
             print(f"[UniRigCache] Loading checkpoint weights...")
-            # PyTorch 2.6+ changed default to weights_only=True
-            torch_version = tuple(map(int, torch.__version__.split('.')[:2]))
-            if torch_version >= (2, 6):
-                checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+
+            # Use safetensors loader for .safetensors files
+            if checkpoint_path.endswith('.safetensors'):
+                print(f"[UniRigCache] Loading safetensors checkpoint: {checkpoint_path}")
+                state_dict = load_safetensors(checkpoint_path, device='cpu')
+                system.load_state_dict(state_dict, strict=False)
             else:
-                checkpoint = torch.load(checkpoint_path, map_location='cpu')
-            system.load_state_dict(checkpoint['state_dict'], strict=False)
+                # PyTorch 2.6+ changed default to weights_only=True
+                torch_version = tuple(map(int, torch.__version__.split('.')[:2]))
+                if torch_version >= (2, 6):
+                    checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+                else:
+                    checkpoint = torch.load(checkpoint_path, map_location='cpu')
+                system.load_state_dict(checkpoint['state_dict'], strict=False)
 
             if cache_to_gpu and torch.cuda.is_available():
                 system = system.cuda()

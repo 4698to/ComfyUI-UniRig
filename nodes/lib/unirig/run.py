@@ -4,6 +4,7 @@ from box import Box
 import os
 import torch
 import lightning as L
+from safetensors.torch import load_file as load_safetensors
 from lightning.pytorch.callbacks import ModelCheckpoint, Callback
 from lightning.pytorch.loggers import WandbLogger
 from typing import List
@@ -317,7 +318,38 @@ if __name__ == "__main__":
         trainer.fit(system, datamodule=data, ckpt_path=resume_from_checkpoint)
     elif mode == 'predict':
         assert resume_from_checkpoint is not None, 'expect resume_from_checkpoint in task'
-        trainer.predict(system, datamodule=data, ckpt_path=resume_from_checkpoint, return_predictions=False, weights_only=False)
+        # Handle safetensors files (can't use trainer.predict ckpt_path for safetensors)
+        if resume_from_checkpoint.endswith('.safetensors'):
+            state_dict = load_safetensors(resume_from_checkpoint)
+            # Remove 'model.' prefix if present (Lightning wraps model)
+            cleaned_state_dict = {}
+            for k, v in state_dict.items():
+                new_key = k[6:] if k.startswith('model.') else k
+                cleaned_state_dict[new_key] = v
+
+            # Try loading with strict=True first, fall back to key remapping if needed
+            try:
+                system.model.load_state_dict(cleaned_state_dict, strict=True)
+            except RuntimeError as e:
+                # Handle skin model key structure difference (.attention.X -> .attention.attn.X)
+                if 'attention.attn.Wq' in str(e):
+                    print("[UniRig] Remapping attention keys for compatibility...")
+                    remapped_dict = {}
+                    for k, v in cleaned_state_dict.items():
+                        # Remap .attention.Wq/Wkv/out_proj -> .attention.attn.Wq/Wkv/out_proj
+                        new_key = k
+                        for suffix in ['.Wq.', '.Wkv.', '.out_proj.']:
+                            old_pattern = f'.attention{suffix}'
+                            new_pattern = f'.attention.attn{suffix}'
+                            if old_pattern in new_key:
+                                new_key = new_key.replace(old_pattern, new_pattern)
+                        remapped_dict[new_key] = v
+                    system.model.load_state_dict(remapped_dict, strict=True)
+                else:
+                    raise
+            trainer.predict(system, datamodule=data, return_predictions=False)
+        else:
+            trainer.predict(system, datamodule=data, ckpt_path=resume_from_checkpoint, return_predictions=False, weights_only=False)
     elif mode == 'validate':
         trainer.validate(system, datamodule=data, ckpt_path=resume_from_checkpoint)
     else:

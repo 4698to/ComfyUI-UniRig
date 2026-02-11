@@ -2,11 +2,18 @@
 # Run: comfy-env install
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# TOOLS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+[tools]
+blender = "4.2"
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # ISOLATED ENVIRONMENT
 # ═══════════════════════════════════════════════════════════════════════════════
 
 [unirig]
-python = "3.11"
+python = "3.11"            # Python 3.11 required for bpy (Blender as Python module)
 cuda_version = "auto"      # Auto-detect from system
 pytorch_version = "auto"   # Auto-detect compatible version
 
@@ -20,9 +27,13 @@ pytorch_version = "auto"   # Auto-detect compatible version
 
     [unirig.packages]
     requirements = [
+        # Blender as Python module (direct import, no subprocess for preprocessing)
+        # Using 4.2 to match original UniRig
+        "bpy==4.2",
+
         # Core
         "trimesh[easy]",  # Include optional deps like shapely
-        "numpy",
+        "numpy<2.0",      # bpy requires numpy<2.0
         "scipy",
         "embreex",  # Required for trimesh ray casting
         "pccm",     # Required by spconv

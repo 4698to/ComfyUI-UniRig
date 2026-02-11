@@ -119,7 +119,7 @@ class UniRigLoadSkeletonModel:
         return {
             "required": {
                 "model_id": ("STRING", {
-                    "default": "VAST-AI/UniRig",
+                    "default": "apozz/UniRig-safetensors",
                     "tooltip": "HuggingFace model ID for skeleton model"
                 }),
                 "cache_to_gpu": ("BOOLEAN", {
@@ -134,7 +134,7 @@ class UniRigLoadSkeletonModel:
     FUNCTION = "load_model"
     CATEGORY = "UniRig/Models"
 
-    def load_model(self, model_id="VAST-AI/UniRig", cache_to_gpu=True):
+    def load_model(self, model_id="apozz/UniRig-safetensors", cache_to_gpu=True):
         """Load and cache skeleton model configuration."""
         print(f"[UniRigLoadSkeletonModel] Loading skeleton model: {model_id}")
         print(f"[UniRigLoadSkeletonModel] GPU caching: {'enabled' if cache_to_gpu else 'disabled (will offload to CPU)'}")
@@ -284,7 +284,7 @@ class UniRigLoadSkinningModel:
         return {
             "required": {
                 "model_id": ("STRING", {
-                    "default": "VAST-AI/UniRig",
+                    "default": "apozz/UniRig-safetensors",
                     "tooltip": "HuggingFace model ID for skinning model"
                 }),
                 "cache_to_gpu": ("BOOLEAN", {
@@ -299,7 +299,7 @@ class UniRigLoadSkinningModel:
     FUNCTION = "load_model"
     CATEGORY = "UniRig/Models"
 
-    def load_model(self, model_id="VAST-AI/UniRig", cache_to_gpu=True):
+    def load_model(self, model_id="apozz/UniRig-safetensors", cache_to_gpu=True):
         """Load and cache skinning model configuration."""
         print(f"[UniRigLoadSkinningModel] Loading skinning model: {model_id}")
         print(f"[UniRigLoadSkinningModel] GPU caching: {'enabled' if cache_to_gpu else 'disabled (will offload to CPU)'}")
@@ -454,7 +454,7 @@ class UniRigLoadModel:
         print(f"[UniRigLoadModel] Loading UniRig models...")
         print(f"[UniRigLoadModel] GPU caching: {'enabled' if cache_to_gpu else 'disabled'}")
 
-        model_id = "VAST-AI/UniRig"
+        model_id = "apozz/UniRig-safetensors"
 
         # Load skeleton model
         skeleton_loader = UniRigLoadSkeletonModel()

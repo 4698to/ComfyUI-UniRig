@@ -1,8 +1,8 @@
 {
   "id": "15f6c038-9249-494a-9d33-9030831736fb",
   "revision": 0,
-  "last_node_id": 42,
-  "last_link_id": 76,
+  "last_node_id": 47,
+  "last_link_id": 83,
   "nodes": [
     {
       "id": 41,
@@ -29,12 +29,60 @@
         }
       ],
       "properties": {
-        "aux_id": "PozzettiAndrea/ComfyUI-UniRig",
+        "cnr_id": "comfyui-unirig",
         "ver": "77db8b90cbac7fb087e4693e61f48a2e591220c7",
         "Node name for S&R": "MIALoadModel",
-        "cnr_id": "comfyui-unirig"
+        "aux_id": "PozzettiAndrea/ComfyUI-UniRig"
       },
       "widgets_values": [
+        true
+      ]
+    },
+    {
+      "id": 42,
+      "type": "MIAAutoRig",
+      "pos": [
+        -41.66842801582068,
+        -439.24011571315464
+      ],
+      "size": [
+        270,
+        150
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "trimesh",
+          "type": "TRIMESH",
+          "link": 83
+        },
+        {
+          "name": "model",
+          "type": "MIA_MODEL",
+          "link": 74
+        }
+      ],
+      "outputs": [
+        {
+          "name": "fbx_output_path",
+          "type": "STRING",
+          "links": [
+            76
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-unirig",
+        "ver": "77db8b90cbac7fb087e4693e61f48a2e591220c7",
+        "Node name for S&R": "MIAAutoRig",
+        "aux_id": "PozzettiAndrea/ComfyUI-UniRig"
+      },
+      "widgets_values": [
+        "rigatoni",
+        false,
+        false,
         true
       ]
     },
@@ -42,8 +90,8 @@
       "id": 27,
       "type": "UniRigLoadMesh",
       "pos": [
-        -381.34057622282205,
-        -464.8837803504917
+        -609.141568615858,
+        -461.9976597533805
       ],
       "size": [
         270,
@@ -58,19 +106,204 @@
           "name": "mesh",
           "type": "TRIMESH",
           "links": [
-            75
+            79,
+            81
           ]
         }
       ],
       "properties": {
-        "aux_id": "PozzettiAndrea/ComfyUI-UniRig",
+        "cnr_id": "comfyui-unirig",
         "ver": "66be51b5fe9fb85dca17918f23822cf0cad7b927",
         "Node name for S&R": "UniRigLoadMesh",
-        "cnr_id": "comfyui-unirig"
+        "aux_id": "PozzettiAndrea/ComfyUI-UniRig"
       },
       "widgets_values": [
         "input",
         "3d/realistic_male_character.glb"
+      ]
+    },
+    {
+      "id": 43,
+      "type": "UniRigOrientationCheck",
+      "pos": [
+        -12.364328254215415,
+        -684.0044622459402
+      ],
+      "size": [
+        270.30625,
+        58
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "mesh",
+          "type": "TRIMESH",
+          "link": 80
+        }
+      ],
+      "outputs": [
+        {
+          "name": "comparison",
+          "type": "IMAGE",
+          "links": [
+            78
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-unirig",
+        "ver": "a6645ed875446f59d564776614340781cc33e94e",
+        "Node name for S&R": "UniRigOrientationCheck"
+      },
+      "widgets_values": [
+        512
+      ]
+    },
+    {
+      "id": 46,
+      "type": "UniRigOrientationCheck",
+      "pos": [
+        -560.4688469087434,
+        -999.4470844535165
+      ],
+      "size": [
+        270.30625,
+        58
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "mesh",
+          "type": "TRIMESH",
+          "link": 81
+        }
+      ],
+      "outputs": [
+        {
+          "name": "comparison",
+          "type": "IMAGE",
+          "links": [
+            82
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-unirig",
+        "ver": "a6645ed875446f59d564776614340781cc33e94e",
+        "Node name for S&R": "UniRigOrientationCheck"
+      },
+      "widgets_values": [
+        512
+      ]
+    },
+    {
+      "id": 47,
+      "type": "PreviewImage",
+      "pos": [
+        -241.62340810052262,
+        -1251.8206088777458
+      ],
+      "size": [
+        466.3558491470873,
+        324.01760998325824
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 82
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.9.2",
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 44,
+      "type": "PreviewImage",
+      "pos": [
+        293.88986497521347,
+        -837.7949553874804
+      ],
+      "size": [
+        466.3558491470873,
+        324.01760998325824
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 78
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.9.2",
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 45,
+      "type": "GeomPackTransformMesh",
+      "pos": [
+        -313.35616336240633,
+        -679.6699856630698
+      ],
+      "size": [
+        270,
+        150
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "trimesh",
+          "type": "TRIMESH",
+          "link": 79
+        }
+      ],
+      "outputs": [
+        {
+          "name": "transformed_mesh",
+          "type": "TRIMESH",
+          "links": [
+            80,
+            83
+          ]
+        },
+        {
+          "name": "info",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-geometrypack",
+        "ver": "2047b540e929f70d32701a9772ea0bb9fc95edd2",
+        "Node name for S&R": "GeomPackTransformMesh"
+      },
+      "widgets_values": [
+        "rotate",
+        0,
+        -90,
+        0
       ]
     },
     {
@@ -85,7 +318,7 @@
         822
       ],
       "flags": {},
-      "order": 3,
+      "order": 8,
       "mode": 0,
       "inputs": [
         {
@@ -104,62 +337,14 @@
       ],
       "outputs": [],
       "properties": {
-        "aux_id": "PozzettiAndrea/ComfyUI-UniRig",
+        "cnr_id": "comfyui-unirig",
         "ver": "31be2f3349eb643d1255cc3280596968a762e0f6",
         "Node name for S&R": "UniRigPreviewRiggedMesh",
-        "cnr_id": "comfyui-unirig"
+        "aux_id": "PozzettiAndrea/ComfyUI-UniRig"
       },
       "widgets_values": [
         "mixamo.fbx",
         ""
-      ]
-    },
-    {
-      "id": 42,
-      "type": "MIAAutoRig",
-      "pos": [
-        -41.66842801582068,
-        -439.24011571315464
-      ],
-      "size": [
-        270,
-        150
-      ],
-      "flags": {},
-      "order": 2,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "trimesh",
-          "type": "TRIMESH",
-          "link": 75
-        },
-        {
-          "name": "model",
-          "type": "MIA_MODEL",
-          "link": 74
-        }
-      ],
-      "outputs": [
-        {
-          "name": "fbx_output_path",
-          "type": "STRING",
-          "links": [
-            76
-          ]
-        }
-      ],
-      "properties": {
-        "aux_id": "PozzettiAndrea/ComfyUI-UniRig",
-        "ver": "77db8b90cbac7fb087e4693e61f48a2e591220c7",
-        "Node name for S&R": "MIAAutoRig",
-        "cnr_id": "comfyui-unirig"
-      },
-      "widgets_values": [
-        "rigatoni",
-        false,
-        false,
-        true
       ]
     }
   ],
@@ -173,30 +358,70 @@
       "MIA_MODEL"
     ],
     [
-      75,
-      27,
-      0,
-      42,
-      0,
-      "TRIMESH"
-    ],
-    [
       76,
       42,
       0,
       10,
       0,
       "STRING"
+    ],
+    [
+      78,
+      43,
+      0,
+      44,
+      0,
+      "IMAGE"
+    ],
+    [
+      79,
+      27,
+      0,
+      45,
+      0,
+      "TRIMESH"
+    ],
+    [
+      80,
+      45,
+      0,
+      43,
+      0,
+      "TRIMESH"
+    ],
+    [
+      81,
+      27,
+      0,
+      46,
+      0,
+      "TRIMESH"
+    ],
+    [
+      82,
+      46,
+      0,
+      47,
+      0,
+      "IMAGE"
+    ],
+    [
+      83,
+      45,
+      0,
+      42,
+      0,
+      "TRIMESH"
     ]
   ],
   "groups": [],
   "config": {},
   "extra": {
     "ds": {
-      "scale": 0.8977133850548208,
+      "scale": 0.8161030773225656,
       "offset": [
-        646.2296000839609,
-        627.9182718705973
+        871.0368563149514,
+        958.6208814328629
       ]
     },
     "frontendVersion": "1.36.14",

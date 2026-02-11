@@ -3,9 +3,10 @@ UniRig Animation Node - Apply animations to rigged meshes
 """
 
 import os
-import subprocess
 import time
 from pathlib import Path
+
+from comfy_env import isolated
 
 # ComfyUI folder paths
 try:
@@ -18,20 +19,42 @@ except:
 
 # Import from base module
 try:
-    from .base import BLENDER_EXE, LIB_DIR
+    from .base import LIB_DIR
 except ImportError:
-    from base import BLENDER_EXE, LIB_DIR
-
-# Blender animation script
-BLENDER_APPLY_ANIMATION = str(LIB_DIR / "blender_apply_animation.py")
+    from base import LIB_DIR
 
 # Animation templates folder (in input directory, copied by prestartup_script.py)
 ANIMATION_TEMPLATES_DIR = Path(COMFYUI_INPUT_FOLDER) / "animation_templates" if COMFYUI_INPUT_FOLDER else None
 
-# Timeout for Blender operations
-BLENDER_TIMEOUT = 300  # 5 minutes for animation baking
+# Direct animation module (bpy as Python module)
+_DIRECT_ANIMATION_MODULE = None
 
 
+def _get_direct_animation():
+    """Get the direct animation module for in-process animation using bpy."""
+    global _DIRECT_ANIMATION_MODULE
+    if _DIRECT_ANIMATION_MODULE is None:
+        animation_path = os.path.join(LIB_DIR, "unirig", "src", "inference", "direct_apply_animation.py")
+        if os.path.exists(animation_path):
+            try:
+                import importlib.util
+                spec = importlib.util.spec_from_file_location("unirig_direct_animation", animation_path)
+                _DIRECT_ANIMATION_MODULE = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(_DIRECT_ANIMATION_MODULE)
+                print(f"[UniRig] Loaded direct animation module from {animation_path}")
+            except ImportError as e:
+                print(f"[UniRig] Direct animation not available (bpy not installed): {e}")
+                _DIRECT_ANIMATION_MODULE = False
+            except Exception as e:
+                print(f"[UniRig] Warning: Could not load direct animation module: {e}")
+                _DIRECT_ANIMATION_MODULE = False
+        else:
+            print(f"[UniRig] Warning: Direct animation module not found at {animation_path}")
+            _DIRECT_ANIMATION_MODULE = False
+    return _DIRECT_ANIMATION_MODULE if _DIRECT_ANIMATION_MODULE else None
+
+
+@isolated(env="unirig", import_paths=[".", ".."])
 class UniRigApplyAnimation:
     """
     Apply an animation to a rigged FBX model.
@@ -127,15 +150,13 @@ class UniRigApplyAnimation:
         if not animation_path.exists():
             raise ValueError(f"Animation file not found: {animation_path}")
 
-        # Check Blender availability
-        if not BLENDER_EXE or not os.path.exists(BLENDER_EXE):
+        # Check direct animation module availability
+        direct_animation = _get_direct_animation()
+        if not direct_animation:
             raise RuntimeError(
-                "Blender is required for animation application.\n"
-                "Run: python blender_install.py"
+                "Direct animation module not available.\n"
+                "Ensure bpy is installed in the unirig environment."
             )
-
-        if not os.path.exists(BLENDER_APPLY_ANIMATION):
-            raise RuntimeError(f"Blender animation script not found: {BLENDER_APPLY_ANIMATION}")
 
         print(f"[UniRigApplyAnimation] Model: {model_fbx_path}")
         print(f"[UniRigApplyAnimation] Animation type: {animation_type}")
@@ -188,60 +209,19 @@ class UniRigApplyAnimation:
         output_path = os.path.join(output_dir, output_filename)
         print(f"[UniRigApplyAnimation] Output: {output_path}")
 
-        # Run Blender script
-        cmd = [
-            BLENDER_EXE,
-            "--background",
-            "--python", BLENDER_APPLY_ANIMATION,
-            "--",
-            model_fbx_path,
-            str(animation_path),
-            output_path
-        ]
-
-        print(f"[UniRigApplyAnimation] Running Blender...")
+        # Run direct animation module
+        print(f"[UniRigApplyAnimation] Applying animation...")
         start_time = time.time()
 
         try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=BLENDER_TIMEOUT
+            result_path = direct_animation.apply_mixamo_animation(
+                model_fbx=model_fbx_path,
+                animation_fbx=str(animation_path),
+                output_fbx=output_path,
             )
 
-            # Log Blender output and check for specific errors
-            skeleton_mismatch = False
-            error_details = []
-            if result.stdout:
-                for line in result.stdout.strip().split('\n'):
-                    if line.startswith('[Blender'):
-                        print(f"[UniRigApplyAnimation] {line}")
-                        # Check for skeleton mismatch errors
-                        if "ERROR:" in line:
-                            error_details.append(line)
-                            if "mixamorig:" in line or "bone names" in line.lower():
-                                skeleton_mismatch = True
-
-            if result.returncode != 0:
-                if skeleton_mismatch:
-                    error_msg = (
-                        "Skeleton mismatch error!\n"
-                        "The model's skeleton does not match the animation skeleton.\n\n"
-                        "For Mixamo animations, the model must use skeleton_template='mixamo'.\n"
-                        "Please re-run UniRig: Extract Skeleton with the correct template.\n\n"
-                        "Details:\n" + "\n".join(error_details)
-                    )
-                else:
-                    error_msg = f"Blender animation failed (code {result.returncode})"
-                    if error_details:
-                        error_msg += "\n" + "\n".join(error_details)
-                    elif result.stderr:
-                        error_msg += f"\n{result.stderr[:1000]}"
-                raise RuntimeError(error_msg)
-
             if not os.path.exists(output_path):
-                raise RuntimeError("Blender did not produce output FBX file")
+                raise RuntimeError("Animation module did not produce output FBX file")
 
             elapsed = time.time() - start_time
             print(f"[UniRigApplyAnimation] Animation applied in {elapsed:.2f}s")
@@ -249,7 +229,17 @@ class UniRigApplyAnimation:
 
             return (output_path,)
 
-        except subprocess.TimeoutExpired:
-            raise RuntimeError(f"Blender animation timed out after {BLENDER_TIMEOUT}s")
+        except RuntimeError as e:
+            # Check for skeleton mismatch errors
+            error_str = str(e)
+            if "mixamorig:" in error_str or "bone names" in error_str.lower():
+                raise RuntimeError(
+                    "Skeleton mismatch error!\n"
+                    "The model's skeleton does not match the animation skeleton.\n\n"
+                    "For Mixamo animations, the model must use skeleton_template='mixamo'.\n"
+                    "Please re-run UniRig: Extract Skeleton with the correct template.\n\n"
+                    f"Details:\n{error_str}"
+                )
+            raise
         except Exception as e:
             raise RuntimeError(f"Animation application failed: {str(e)}")

@@ -52,7 +52,7 @@ def load_fbx_with_blender(file_path: str) -> Tuple[Optional[trimesh.Trimesh], st
             "FBX file format requires Blender for conversion.\n"
             "Blender is not installed or not found.\n\n"
             "To fix this:\n"
-            "1. Run: python blender_install.py\n"
+            "1. Run: comfy-env install\n"
             "   OR\n"
             "2. Install Blender manually and add to PATH\n\n"
             "Alternatively, convert your FBX to GLB/OBJ format using Blender or other software."

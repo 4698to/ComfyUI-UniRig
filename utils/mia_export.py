@@ -40,20 +40,93 @@ def ortho6d_to_matrix(ortho6d):
     return np.column_stack([x, y, z])
 
 
-def apply_pose_to_rest(armature_obj, pose, bones_idx_dict, parent_indices, input_meshes):
+def get_rotation_about_point(rotation, point):
+    """
+    Create a 4x4 transform matrix that rotates about a given point.
+
+    Args:
+        rotation: (3, 3) rotation matrix
+        point: (3,) point to rotate about
+
+    Returns:
+        (4, 4) transform matrix
+    """
+    # T = translate to origin, R = rotate, T^-1 = translate back
+    # Result: point stays fixed, rotation applied around it
+    transform = np.eye(4)
+    transform[:3, :3] = rotation
+    # translation = point - rotation @ point = (I - R) @ point
+    transform[:3, 3] = point - rotation @ point
+    return transform
+
+
+def pose_rot_to_global(pose_rot, joints, parent_indices):
+    """
+    Convert per-bone local rotations to global 4x4 transforms.
+    Propagates transforms through kinematic chain.
+
+    This matches the original MIA implementation from blender_utils.py (lines 897-903):
+    - Each bone rotates about its ORIGINAL joint position (not the posed position)
+    - A translation offset is added to account for parent movement
+    - Transforms are computed by propagating parent effects through the chain
+
+    Args:
+        pose_rot: (K, 6) ortho6d rotations per bone
+        joints: (K, 3) joint positions
+        parent_indices: list of parent indices (-1 for root)
+
+    Returns:
+        pose_global: (K, 4, 4) global transforms per bone
+    """
+    K = pose_rot.shape[0]
+
+    # Convert ortho6d to rotation matrices
+    # MIA predicts rotations FROM T-pose TO input pose (forward direction)
+    rot_matrices = np.zeros((K, 3, 3))
+    for i in range(K):
+        rot_matrices[i] = ortho6d_to_matrix(pose_rot[i])
+
+    # Initialize transforms - each bone rotates about its own joint initially
+    pose_global = np.zeros((K, 4, 4))
+    for i in range(K):
+        pose_global[i] = get_rotation_about_point(rot_matrices[i], joints[i])
+
+    # Track posed joint positions (where joints end up after parent transforms)
+    posed_joints = joints.copy()
+
+    # Propagate through kinematic chain
+    # For each child bone, compute its posed joint position based on parent's transform,
+    # rotate about the ORIGINAL joint position, then add translation offset
+    for i in range(1, K):
+        parent_idx = parent_indices[i]
+        parent_matrix = pose_global[parent_idx]
+
+        # Compute where this joint ends up after parent's transform
+        posed_joints[i] = parent_matrix[:3, :3] @ joints[i] + parent_matrix[:3, 3]
+
+        # Rotate about ORIGINAL joint position (matches original MIA)
+        matrix = get_rotation_about_point(rot_matrices[i], joints[i])
+
+        # Add translation offset to account for parent movement
+        matrix[:3, 3] += posed_joints[i] - joints[i]
+
+        pose_global[i] = matrix
+
+    return pose_global
+
+
+def apply_pose_to_rest(armature_obj, pose, bones_idx_dict, parent_indices, input_meshes, mia_joints):
     """
     Apply MIA's pose prediction to transform skeleton from input pose to T-pose rest.
-
-    The pose data contains LOCAL rotations (relative to parent) that describe how each
-    bone is rotated from rest pose to input pose. We apply the INVERSE rotations
-    propagated through the kinematic chain to transform back to rest pose.
+    Uses the original MIA approach with kinematic chain propagation.
 
     Args:
         armature_obj: Blender armature object
-        pose: (num_bones, 6) array of ortho6d local rotations
+        pose: (num_bones, 6) array of ortho6d rotations per bone
         bones_idx_dict: Mapping from bone names to indices
         parent_indices: List of parent bone indices (-1 for root)
         input_meshes: List of mesh objects to transform along with skeleton
+        mia_joints: (num_bones, 3) array of MIA-predicted joint positions (normalized)
     """
     if pose is None:
         print("[MIA Export] No pose data - skipping pose-to-rest transformation")
@@ -63,80 +136,127 @@ def apply_pose_to_rest(armature_obj, pose, bones_idx_dict, parent_indices, input
         print("[MIA Export] No kinematic tree - skipping pose-to-rest transformation")
         return
 
-    print(f"[MIA Export] Applying pose-to-rest transformation with kinematic chain...")
+    print(f"[MIA Export] Applying pose-to-rest transformation...")
+    print(f"[MIA Export] Using MIA joints for pose computation (shape: {mia_joints.shape})")
 
-    # Convert ortho6d to rotation matrices for all bones
-    rot_matrices = {}
-    for name, idx in bones_idx_dict.items():
-        if idx < pose.shape[0]:
-            rot_matrices[name] = ortho6d_to_matrix(pose[idx])
+    # Use MIA-predicted joints for pose computation (these match what the pose was predicted for)
+    joints = mia_joints
 
-    # Apply inverse rotations in pose mode
-    # The rotations are LOCAL (relative to parent), so we apply them directly
-    # Blender handles the kinematic chain propagation
-    bpy.context.view_layer.objects.active = armature_obj
+    # Convert ortho6d to global 4x4 transforms using kinematic chain
+    pose_global = pose_rot_to_global(pose, joints, parent_indices)
+
+    # Set root bone to identity (no global movement)
+    pose_global[0] = np.eye(4)
+
+    print(f"[MIA Export] Computed global transforms for {len(pose_global)} bones")
+
+    # === DEBUG: Print sample transforms ===
+    print(f"[MIA Export DEBUG] Sample pose transforms (T-pose to input pose, forward):")
+    for bone_name in ["mixamorig:Hips", "mixamorig:Spine", "mixamorig:Head"]:
+        if bone_name in bones_idx_dict:
+            idx = bones_idx_dict[bone_name]
+            rot = pose_global[idx][:3, :3]
+            trans = pose_global[idx][:3, 3]
+            print(f"  {bone_name} (idx={idx}):")
+            print(f"    Rotation diag: [{rot[0,0]:.4f}, {rot[1,1]:.4f}, {rot[2,2]:.4f}]")
+            print(f"    Translation: [{trans[0]:.4f}, {trans[1]:.4f}, {trans[2]:.4f}]")
+
+    # Define finger bone prefixes to skip (fingers often have problematic transforms)
+    finger_prefixes = [
+        "LeftHandThumb", "LeftHandIndex", "LeftHandMiddle", "LeftHandRing", "LeftHandPinky",
+        "RightHandThumb", "RightHandIndex", "RightHandMiddle", "RightHandRing", "RightHandPinky",
+        "mixamorig:LeftHandThumb", "mixamorig:LeftHandIndex", "mixamorig:LeftHandMiddle",
+        "mixamorig:LeftHandRing", "mixamorig:LeftHandPinky",
+        "mixamorig:RightHandThumb", "mixamorig:RightHandIndex", "mixamorig:RightHandMiddle",
+        "mixamorig:RightHandRing", "mixamorig:RightHandPinky",
+    ]
+
+    def is_finger_bone(name):
+        for prefix in finger_prefixes:
+            if name.startswith(prefix):
+                return True
+        return False
+
+    # Apply transforms in pose mode
     bpy.ops.object.mode_set(mode='POSE')
 
     applied_count = 0
-    for bone_name, rot_matrix in rot_matrices.items():
+    skipped_fingers = 0
+    for bone_name, idx in bones_idx_dict.items():
         pbone = armature_obj.pose.bones.get(bone_name)
         if pbone is None:
-            print(f"[MIA Export] Warning: pose bone {bone_name} not found")
             continue
 
-        # Convert to Blender Matrix (3x3)
-        blender_rot = Matrix([
-            [rot_matrix[0, 0], rot_matrix[0, 1], rot_matrix[0, 2]],
-            [rot_matrix[1, 0], rot_matrix[1, 1], rot_matrix[1, 2]],
-            [rot_matrix[2, 0], rot_matrix[2, 1], rot_matrix[2, 2]],
-        ])
+        # Skip finger bones - they often have problematic transforms
+        # and T-pose for fingers is less important than body
+        if is_finger_bone(bone_name):
+            skipped_fingers += 1
+            continue
 
-        # MIA's pose describes rotation FROM T-pose TO input pose
-        # To go FROM input pose TO T-pose, we need the INVERSE rotation
-        # For rotation matrices, inverse = transpose
-        inv_rot = blender_rot.transposed()
+        # Get the global transform for this bone
+        pose_matrix = Matrix(pose_global[idx].tolist())
 
-        # Set the pose bone rotation in LOCAL space
-        pbone.rotation_mode = 'QUATERNION'
-        pbone.rotation_quaternion = inv_rot.to_quaternion()
+        # Apply: bone.matrix = pose_matrix @ bone.bone.matrix_local
+        # This sets the bone's global pose
+        pbone.matrix = pose_matrix @ pbone.bone.matrix_local
+        bpy.context.view_layer.update()
         applied_count += 1
 
-    bpy.ops.object.mode_set(mode='OBJECT')
-    print(f"[MIA Export] Applied inverse local rotations to {applied_count} bones")
+    print(f"[MIA Export] Skipped {skipped_fingers} finger bones (keeping original pose)")
 
-    # Update the view layer to propagate pose through kinematic chain
+    bpy.ops.object.mode_set(mode='OBJECT')
+    print(f"[MIA Export] Applied global transforms to {applied_count} bones")
+
+    # Update view layer
     bpy.context.view_layer.update()
 
+    # === DEBUG: Print bone positions after pose transform ===
+    print(f"[MIA Export DEBUG] Bone positions AFTER pose transform:")
+    bpy.ops.object.mode_set(mode='POSE')
+    for bone_name in ["mixamorig:Hips", "mixamorig:Spine", "mixamorig:Head", "mixamorig:LeftArm", "mixamorig:RightArm"]:
+        pbone = armature_obj.pose.bones.get(bone_name)
+        if pbone:
+            head_world = armature_obj.matrix_world @ pbone.head
+            print(f"  {bone_name}: head=({head_world.x:.4f}, {head_world.y:.4f}, {head_world.z:.4f})")
+    bpy.ops.object.mode_set(mode='OBJECT')
+
     # Apply the posed armature as new rest pose
-    # First, apply armature modifier to meshes to bake the current deformation
     for mesh_obj in input_meshes:
         bpy.context.view_layer.objects.active = mesh_obj
         for mod in mesh_obj.modifiers:
             if mod.type == 'ARMATURE':
                 bpy.ops.object.modifier_apply(modifier=mod.name)
                 break
-        # Don't clear parent - keep relationship but modifier is applied
 
-    # Apply current pose as rest pose (bakes bone transforms into edit bones)
+    # Apply current pose as rest pose
     bpy.context.view_layer.objects.active = armature_obj
     bpy.ops.object.mode_set(mode='POSE')
     bpy.ops.pose.armature_apply(selected=False)
     bpy.ops.object.mode_set(mode='OBJECT')
 
-    # Re-add armature modifier to meshes (vertex groups are preserved!)
+    # Re-add armature modifier
     for mesh_obj in input_meshes:
-        # Add new armature modifier pointing to our armature
         mod = mesh_obj.modifiers.new(name="Armature", type='ARMATURE')
         mod.object = armature_obj
         mod.use_vertex_groups = True
 
-    # Clear any remaining pose transforms
+    # Clear remaining pose transforms
     bpy.ops.object.mode_set(mode='POSE')
     bpy.ops.pose.select_all(action='SELECT')
     bpy.ops.pose.transforms_clear()
     bpy.ops.object.mode_set(mode='OBJECT')
 
-    print(f"[MIA Export] Skeleton transformed to rest pose")
+    # === DEBUG: Print final bone positions in rest pose ===
+    print(f"[MIA Export DEBUG] Final bone positions (rest pose):")
+    bpy.ops.object.mode_set(mode='EDIT')
+    for bone_name in ["mixamorig:Hips", "mixamorig:Spine", "mixamorig:Head", "mixamorig:LeftArm", "mixamorig:RightArm"]:
+        bone = armature_obj.data.edit_bones.get(bone_name)
+        if bone:
+            head_world = armature_obj.matrix_world @ bone.head
+            print(f"  {bone_name}: head=({head_world.x:.4f}, {head_world.y:.4f}, {head_world.z:.4f})")
+    bpy.ops.object.mode_set(mode='OBJECT')
+
+    print(f"[MIA Export] Skeleton transformed to rest pose (using forward rotations, armature modifier inverts)")
 
 
 def parse_args():
@@ -222,68 +342,23 @@ def get_template_bone_data(armature_obj):
     return bone_data
 
 
-def compute_scale_transform(template_bone_data, mia_joints, bones_idx_dict):
-    """
-    Compute scale and offset to transform MIA joints to template scale.
-
-    MIA outputs normalized joints (roughly [-1, 1]).
-    Template is in centimeter scale (e.g., Hips at Y=104).
-
-    Returns:
-        scale: Scale factor to apply to MIA joints
-        offset: Offset to add after scaling
-    """
-    # Get reference points from template and MIA
-    hips_name = "mixamorig:Hips"
-    head_name = "mixamorig:Head"
-
-    if hips_name not in template_bone_data or head_name not in template_bone_data:
-        print("[MIA Export] Warning: Missing reference bones for scale computation")
-        return 1.0, np.array([0.0, 0.0, 0.0])
-
-    if hips_name not in bones_idx_dict or head_name not in bones_idx_dict:
-        print("[MIA Export] Warning: Missing reference bones in MIA output")
-        return 1.0, np.array([0.0, 0.0, 0.0])
-
-    # Template positions (in local Y-up space)
-    template_hips = np.array(template_bone_data[hips_name]['head'])
-    template_head = np.array(template_bone_data[head_name]['head'])
-    template_height = np.linalg.norm(template_head - template_hips)
-
-    # MIA positions
-    hips_idx = bones_idx_dict[hips_name]
-    head_idx = bones_idx_dict[head_name]
-    mia_hips = mia_joints[hips_idx]
-    mia_head = mia_joints[head_idx]
-    mia_height = np.linalg.norm(mia_head - mia_hips)
-
-    if mia_height < 0.001:
-        print("[MIA Export] Warning: MIA skeleton has near-zero height")
-        return 1.0, np.array([0.0, 0.0, 0.0])
-
-    # Compute scale
-    scale = template_height / mia_height
-
-    # Compute offset: position MIA hips at template hips after scaling
-    offset = template_hips - mia_hips * scale
-
-    print(f"[MIA Export] Scale transform: scale={scale:.3f}, offset=({offset[0]:.2f}, {offset[1]:.2f}, {offset[2]:.2f})")
-    print(f"[MIA Export] Template hips->head height: {template_height:.2f}")
-    print(f"[MIA Export] MIA hips->head height: {mia_height:.4f}")
-
-    return scale, offset
+# DEPRECATED: compute_scale_transform - This approach was wrong.
+# The original MIA uses matrix_world manipulation instead.
+# def compute_scale_transform(template_bone_data, mia_joints, bones_idx_dict):
+#     """
+#     Compute scale and offset to transform MIA joints to template scale.
+#     ...
+#     """
+#     pass
 
 
-def transform_joints_to_template_space(joints, joints_tail, scale, offset):
-    """
-    Transform MIA joints from normalized space to template scale.
-    """
-    transformed_joints = joints * scale + offset
-    transformed_tail = None
-    if joints_tail is not None:
-        transformed_tail = joints_tail * scale + offset
-
-    return transformed_joints, transformed_tail
+# DEPRECATED: transform_joints_to_template_space - This approach was wrong.
+# The original MIA uses matrix_world manipulation instead.
+# def transform_joints_to_template_space(joints, joints_tail, scale, offset):
+#     """
+#     Transform MIA joints from normalized space to template scale.
+#     """
+#     pass
 
 
 def apply_template_orientations(armature_obj, template_bone_data, bones_idx_dict):
@@ -570,45 +645,170 @@ def main():
     if args["remove_fingers"]:
         remove_finger_bones(armature, bones_idx_dict)
 
-    # Transform MIA joints from normalized space to template scale
-    # MIA outputs Y-up joints in normalized [-1, 1] space
-    # Template bones are in centimeter scale (Hips at Y~104)
-    scale, offset = compute_scale_transform(template_bone_data, joints, bones_idx_dict)
-    joints_scaled, joints_tail_scaled = transform_joints_to_template_space(joints, joints_tail, scale, offset)
+    # === DEBUG: Create output directory for intermediate files ===
+    debug_dir = os.path.dirname(args["output_path"])
+    debug_prefix = os.path.splitext(os.path.basename(args["output_path"]))[0]
 
-    # Scale input meshes to match template scale
-    # The mesh from MIA is in normalized space, same as joints
-    for mesh_obj in input_meshes:
-        mesh_obj.scale = (scale, scale, scale)
-        mesh_obj.location = Vector(offset)
-    # Apply transforms so the mesh data is in world space
+    # === DEBUG: Print input mesh stats ===
+    print(f"\n{'='*60}")
+    print(f"[MIA Export DEBUG] INPUT MESH STATS (before transformation)")
+    print(f"{'='*60}")
+    for i, mesh_obj in enumerate(input_meshes):
+        mesh_data = mesh_obj.data
+        verts = np.array([v.co for v in mesh_data.vertices])
+        print(f"  Mesh {i} '{mesh_obj.name}':")
+        print(f"    Vertices: {len(verts)}")
+        print(f"    Bounds X: [{verts[:, 0].min():.4f}, {verts[:, 0].max():.4f}]")
+        print(f"    Bounds Y: [{verts[:, 1].min():.4f}, {verts[:, 1].max():.4f}]")
+        print(f"    Bounds Z: [{verts[:, 2].min():.4f}, {verts[:, 2].max():.4f}]")
+        print(f"    Center: ({verts.mean(axis=0)[0]:.4f}, {verts.mean(axis=0)[1]:.4f}, {verts.mean(axis=0)[2]:.4f})")
+
+    # === DEBUG: Print input joints stats ===
+    print(f"\n{'='*60}")
+    print(f"[MIA Export DEBUG] INPUT JOINTS STATS (MIA output)")
+    print(f"{'='*60}")
+    print(f"  Joints shape: {joints.shape}")
+    print(f"  Joints bounds X: [{joints[:, 0].min():.4f}, {joints[:, 0].max():.4f}]")
+    print(f"  Joints bounds Y: [{joints[:, 1].min():.4f}, {joints[:, 1].max():.4f}]")
+    print(f"  Joints bounds Z: [{joints[:, 2].min():.4f}, {joints[:, 2].max():.4f}]")
+    hips_idx = bones_idx_dict.get("mixamorig:Hips")
+    head_idx = bones_idx_dict.get("mixamorig:Head")
+    if hips_idx is not None and head_idx is not None:
+        print(f"  Hips position: ({joints[hips_idx, 0]:.4f}, {joints[hips_idx, 1]:.4f}, {joints[hips_idx, 2]:.4f})")
+        print(f"  Head position: ({joints[head_idx, 0]:.4f}, {joints[head_idx, 1]:.4f}, {joints[head_idx, 2]:.4f})")
+
+    # === DEBUG: Print armature info ===
+    print(f"\n{'='*60}")
+    print(f"[MIA Export DEBUG] ARMATURE INFO")
+    print(f"{'='*60}")
+    print(f"  Armature name: {armature.name}")
+    print(f"  Rotation euler: {[r for r in armature.rotation_euler]}")
+    print(f"  Rotation (degrees): {[r * 180 / 3.14159 for r in armature.rotation_euler]}")
+    print(f"  Matrix world:\n{armature.matrix_world}")
+
+    # === ORIGINAL MIA APPROACH ===
+    # 1. Save armature's world matrix and get scaling factor
+    matrix_world = armature.matrix_world.copy()
+    scaling = matrix_world.to_scale()[0]
+    print(f"\n[MIA Export] Step 1: Saved matrix_world, scaling = {scaling}")
+    print(f"  Matrix world rotation (from to_euler): {[r * 180 / 3.14159 for r in matrix_world.to_euler()]}")
+
+    # 2. Reset armature to identity (work in Y-up local space)
+    armature.matrix_world.identity()
+    bpy.context.view_layer.update()
+    print(f"[MIA Export] Step 2: Reset armature.matrix_world to identity")
+
+    # === DEBUG: Save mesh BEFORE transformation ===
+    debug_mesh_before = os.path.join(debug_dir, f"{debug_prefix}_debug_mesh_BEFORE_transform.obj")
     bpy.ops.object.select_all(action='DESELECT')
     for mesh_obj in input_meshes:
         mesh_obj.select_set(True)
-    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+    bpy.ops.wm.obj_export(filepath=debug_mesh_before, export_selected_objects=True)
     bpy.ops.object.select_all(action='DESELECT')
-    print(f"[MIA Export] Scaled mesh(es) to template scale")
+    print(f"[MIA Export DEBUG] Saved mesh BEFORE transform: {debug_mesh_before}")
 
-    # Update bone positions with scaled joints and template rolls for animation compatibility
-    # Note: Don't use reset_as_rest here - pose transformation is handled separately
-    set_rest_bones(armature, joints_scaled, joints_tail_scaled, bones_idx_dict,
+    # 3. Transform mesh vertices: Y-Z swap and divide by scaling
+    print(f"\n[MIA Export] Step 3: Transforming mesh vertices (Y-Z swap, /scaling)")
+    for mesh_obj in input_meshes:
+        mesh_data = mesh_obj.data
+        verts = np.array([v.co for v in mesh_data.vertices])
+
+        print(f"  Mesh '{mesh_obj.name}' BEFORE transform:")
+        print(f"    Sample vert[0]: ({verts[0, 0]:.4f}, {verts[0, 1]:.4f}, {verts[0, 2]:.4f})")
+
+        # Y-Z swap: matches original MIA
+        # verts[:, 1], verts[:, 2] = verts[:, 2].copy(), -verts[:, 1].copy()
+        new_y = verts[:, 2].copy()
+        new_z = -verts[:, 1].copy()
+        verts[:, 1] = new_y
+        verts[:, 2] = new_z
+        verts = verts / scaling
+
+        print(f"  Mesh '{mesh_obj.name}' AFTER transform:")
+        print(f"    Sample vert[0]: ({verts[0, 0]:.4f}, {verts[0, 1]:.4f}, {verts[0, 2]:.4f})")
+        print(f"    New bounds X: [{verts[:, 0].min():.4f}, {verts[:, 0].max():.4f}]")
+        print(f"    New bounds Y: [{verts[:, 1].min():.4f}, {verts[:, 1].max():.4f}]")
+        print(f"    New bounds Z: [{verts[:, 2].min():.4f}, {verts[:, 2].max():.4f}]")
+
+        for i, v in enumerate(mesh_data.vertices):
+            v.co = verts[i]
+        mesh_data.update()
+
+    # === DEBUG: Save mesh AFTER transformation ===
+    debug_mesh_after = os.path.join(debug_dir, f"{debug_prefix}_debug_mesh_AFTER_transform.obj")
+    bpy.ops.object.select_all(action='DESELECT')
+    for mesh_obj in input_meshes:
+        mesh_obj.select_set(True)
+    bpy.ops.wm.obj_export(filepath=debug_mesh_after, export_selected_objects=True)
+    bpy.ops.object.select_all(action='DESELECT')
+    print(f"[MIA Export DEBUG] Saved mesh AFTER transform: {debug_mesh_after}")
+
+    # 4. Set bones with joints/scaling (now in same Y-up normalized space as mesh)
+    joints_normalized = joints / scaling
+    joints_tail_normalized = joints_tail / scaling if joints_tail is not None else None
+    print(f"\n[MIA Export] Step 4: Setting bones with joints/scaling")
+    print(f"  Joints normalized bounds Y: [{joints_normalized[:, 1].min():.4f}, {joints_normalized[:, 1].max():.4f}]")
+    if hips_idx is not None:
+        print(f"  Hips normalized: ({joints_normalized[hips_idx, 0]:.4f}, {joints_normalized[hips_idx, 1]:.4f}, {joints_normalized[hips_idx, 2]:.4f})")
+
+    set_rest_bones(armature, joints_normalized, joints_tail_normalized, bones_idx_dict,
                    template_bone_data=template_bone_data, reset_as_rest=False)
 
-    # Apply weights BEFORE parenting (so vertex groups exist)
+    # 5. Parent mesh to armature
+    print(f"\n[MIA Export] Step 5: Parenting mesh to armature")
+    for mesh_obj in input_meshes:
+        mesh_obj.parent = armature
+        print(f"  Parented '{mesh_obj.name}' to '{armature.name}'")
+
+    # 6. Apply weights
+    print(f"\n[MIA Export] Step 6: Applying weights")
+    print(f"  Weights shape: {bw.shape}")
+    print(f"  Weights sum per vertex (should be ~1.0): min={bw.sum(axis=1).min():.4f}, max={bw.sum(axis=1).max():.4f}")
     set_weights(input_meshes, bw, bones_idx_dict)
 
-    # Parent meshes to armature and add armature modifier
+    # 7. Add armature modifier
+    print(f"\n[MIA Export] Step 7: Adding armature modifier")
     for mesh_obj in input_meshes:
-        # Set parent relationship
-        mesh_obj.parent = armature
-        # Add armature modifier
         mod = mesh_obj.modifiers.new(name="Armature", type='ARMATURE')
         mod.object = armature
         mod.use_vertex_groups = True
+        print(f"  Added armature modifier to '{mesh_obj.name}'")
+
+    # === DEBUG: Save rigged mesh BEFORE restoring matrix ===
+    debug_rigged_before = os.path.join(debug_dir, f"{debug_prefix}_debug_rigged_BEFORE_matrix_restore.fbx")
+    bpy.ops.export_scene.fbx(
+        filepath=debug_rigged_before,
+        use_selection=False,
+        object_types={'ARMATURE', 'MESH'},
+        add_leaf_bones=False,
+        bake_anim=False,
+    )
+    print(f"[MIA Export DEBUG] Saved rigged mesh BEFORE matrix restore: {debug_rigged_before}")
+
+    # 8. Restore armature matrix (transforms everything to Z-up world)
+    armature.matrix_world = matrix_world
+    bpy.context.view_layer.update()
+    print(f"\n[MIA Export] Step 8: Restored armature.matrix_world")
+    print(f"  Final armature rotation (degrees): {[r * 180 / 3.14159 for r in armature.rotation_euler]}")
+
+    # === DEBUG: Print final stats ===
+    print(f"\n{'='*60}")
+    print(f"[MIA Export DEBUG] FINAL STATS")
+    print(f"{'='*60}")
+    for mesh_obj in input_meshes:
+        # Get world-space bounds
+        bbox_corners = [mesh_obj.matrix_world @ Vector(corner) for corner in mesh_obj.bound_box]
+        xs = [c.x for c in bbox_corners]
+        ys = [c.y for c in bbox_corners]
+        zs = [c.z for c in bbox_corners]
+        print(f"  Mesh '{mesh_obj.name}' world bounds:")
+        print(f"    X: [{min(xs):.4f}, {max(xs):.4f}]")
+        print(f"    Y: [{min(ys):.4f}, {max(ys):.4f}]")
+        print(f"    Z: [{min(zs):.4f}, {max(zs):.4f}]")
 
     # Apply pose-to-rest transformation if pose data is available
     if pose is not None and args["reset_to_rest"]:
-        apply_pose_to_rest(armature, pose, bones_idx_dict, parent_indices, input_meshes)
+        apply_pose_to_rest(armature, pose, bones_idx_dict, parent_indices, input_meshes, joints_normalized)
 
     # Update scene before export
     bpy.context.view_layer.update()

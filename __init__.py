@@ -75,7 +75,7 @@ if not _RUNNING_TESTS:
         import time
         import folder_paths
 
-        static_path = os.path.join(os.path.dirname(__file__), "static")
+        static_path = os.path.join(os.path.dirname(__file__), "web", "static")
         if os.path.exists(static_path):
             PromptServer.instance.app.add_routes([
                 web.static('/extensions/ComfyUI-UniRig/static', static_path)
@@ -120,9 +120,9 @@ if not _RUNNING_TESTS:
 
                 # Get paths to Blender and script
                 from .nodes.base import BLENDER_EXE, NODE_DIR
-                from .constants import BLENDER_TIMEOUT
+                from .nodes.constants import BLENDER_TIMEOUT
 
-                blender_script = os.path.join(NODE_DIR, 'lib', 'blender_export_posed_fbx.py')
+                blender_script = os.path.join(NODE_DIR, 'nodes', 'lib', 'blender_export_posed_fbx.py')
 
                 if not os.path.exists(blender_script):
                     return web.json_response({'error': 'Blender export script not found'}, status=500)

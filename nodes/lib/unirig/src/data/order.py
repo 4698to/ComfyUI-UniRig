@@ -78,8 +78,15 @@ class Order():
             if part is None: # spring
                 continue
             if cls in self.parts and part in self.parts[cls]:
-                names.extend(self.parts[cls][part])
+                part_names = self.parts[cls][part]
+                print(f"[Order] Found {len(part_names)} bone names for cls='{cls}', part='{part}'")
+                names.extend(part_names)
+            else:
+                print(f"[Order] WARNING: cls='{cls}' or part='{part}' not found in self.parts")
 
+        print(f"[Order] Total named bones: {len(names)}, num_bones: {num_bones}")
+        if len(names) < num_bones:
+            print(f"[Order] Filling {num_bones - len(names)} extra bones with generic names")
         assert len(names) <= num_bones, f"Expected {len(names)} bones for cls='{cls}', got {num_bones} bones"
         for i in range(len(names), num_bones):
             names.append(f"bone_{i}")

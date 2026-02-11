@@ -299,7 +299,11 @@ class TokenizerPart(TokenizerSpec):
             cls = None
 
         # Auto-infer parts if they're all None/empty
+        # Debug: show cls and parts status
+        print(f"[Tokenizer] Detokenize: cls='{cls}', num_bones={num_bones}, parts={parts[:5]}..." if len(parts) > 5 else f"[Tokenizer] Detokenize: cls='{cls}', num_bones={num_bones}, parts={parts}")
+
         if self.order is not None:
+            print(f"[Tokenizer] Order config loaded. Available cls: {list(self.order.parts_order.keys())}")
             # Filter out None values from parts list (spring tokens)
             cleaned_parts = [p for p in parts if p is not None]
 
@@ -308,9 +312,13 @@ class TokenizerPart(TokenizerSpec):
                 print(f"[Tokenizer] Model generated no part tokens for cls='{cls}', auto-inferring from parts_order")
                 cleaned_parts = list(self.order.parts_order[cls])
                 print(f"[Tokenizer] Inferred parts: {cleaned_parts}")
+            elif len(cleaned_parts) == 0:
+                print(f"[Tokenizer] WARNING: No parts generated and cannot auto-infer (cls='{cls}' not in parts_order or cls is None)")
 
             names = self.order.make_names(cls=cls, parts=cleaned_parts, num_bones=num_bones)
+            print(f"[Tokenizer] Generated names: {names[:5]}..." if len(names) > 5 else f"[Tokenizer] Generated names: {names}")
         else:
+            print(f"[Tokenizer] WARNING: self.order is None, using generic bone names")
             names = [f"bone_{i}" for i in range(num_bones)]
         return DetokenizeOutput(
             tokens=ids,

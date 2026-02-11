@@ -15,6 +15,7 @@ classifiers = [
 # Core dependencies for ComfyUI-UniRig
 dependencies = [
     # PyTorch (ComfyUI compatible)
+    "comfy-env==0.0.19",
     "torch>=2.0.0",
     "torchvision",
 
@@ -22,6 +23,7 @@ dependencies = [
     "trimesh",
     "numpy",
     "scipy",
+    "PyOpenGL==3.1.0",
     "pyrender",
     "libigl",
 
@@ -67,4 +69,11 @@ dev = [
     "pytest",
     "black",
     "flake8",
+]
+
+# Direct bpy preprocessing (requires Python 3.11+)
+# Enables mesh preprocessing without Blender subprocess
+# Install with: pip install comfyui-unirig[bpy]
+bpy = [
+    "bpy>=4.0.0",
 ]

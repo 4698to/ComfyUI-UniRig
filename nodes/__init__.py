@@ -8,7 +8,6 @@ from .base import (
     UNIRIG_PATH,
     UNIRIG_MODELS_DIR,
     BLENDER_EXE,
-    BLENDER_SCRIPT,
     BLENDER_PARSE_SKELETON,
     BLENDER_EXTRACT_MESH_INFO,
 )
@@ -16,7 +15,6 @@ from .base import (
 from .model_loaders import UniRigLoadModel
 from .auto_rig import UniRigAutoRig
 from .skeleton_io import (
-    UniRigSaveSkeleton,
     UniRigLoadRiggedMesh,
     UniRigPreviewRiggedMesh,
     UniRigExportPosedFBX,
@@ -28,10 +26,12 @@ from .animation import UniRigApplyAnimation
 from .mia_model_loader import MIALoadModel
 from .mia_auto_rig import MIAAutoRig
 
+# Utility nodes
+from .orientation_check import UniRigOrientationCheck
+
 NODE_CLASS_MAPPINGS = {
     "UniRigLoadModel": UniRigLoadModel,
     "UniRigAutoRig": UniRigAutoRig,
-    "UniRigSaveSkeleton": UniRigSaveSkeleton,
     "UniRigLoadRiggedMesh": UniRigLoadRiggedMesh,
     "UniRigPreviewRiggedMesh": UniRigPreviewRiggedMesh,
     "UniRigExportPosedFBX": UniRigExportPosedFBX,
@@ -41,12 +41,13 @@ NODE_CLASS_MAPPINGS = {
     # MIA nodes
     "MIALoadModel": MIALoadModel,
     "MIAAutoRig": MIAAutoRig,
+    # Utility nodes
+    "UniRigOrientationCheck": UniRigOrientationCheck,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "UniRigLoadModel": "UniRig: Load Model",
     "UniRigAutoRig": "UniRig: Auto Rig",
-    "UniRigSaveSkeleton": "UniRig: Save Skeleton",
     "UniRigLoadRiggedMesh": "UniRig: Load Rigged Mesh",
     "UniRigPreviewRiggedMesh": "UniRig: Preview Rigged Mesh",
     "UniRigExportPosedFBX": "UniRig: Export Posed FBX",
@@ -56,6 +57,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     # MIA nodes
     "MIALoadModel": "MIA: Load Model",
     "MIAAutoRig": "MIA: Auto Rig",
+    # Utility nodes
+    "UniRigOrientationCheck": "UniRig: Orientation Check",
 }
 
 __all__ = [

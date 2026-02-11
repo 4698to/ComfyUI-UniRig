@@ -1,11 +1,18 @@
+import json
 import torch
 from torch import nn, FloatTensor, LongTensor
 import numpy as np
 from torch.nn.functional import pad
+from pathlib import Path
 from typing import Dict, List, Union
-from transformers import AutoModelForCausalLM, AutoConfig, LogitsProcessor, LogitsProcessorList
+from transformers import AutoModelForCausalLM, OPTConfig, LogitsProcessor, LogitsProcessorList
 
 from .spec import ModelSpec, ModelInput
+
+# Load OPT-350m config from local JSON file (no HuggingFace download needed)
+_CONFIG_PATH = Path(__file__).parent / "opt_350m_config.json"
+with open(_CONFIG_PATH) as f:
+    _OPT_350M_CONFIG = json.load(f)
 from .parse_encoder import MAP_MESH_ENCODER, get_mesh_encoder
 
 from ..tokenizer.spec import TokenizerSpec, DetokenizeOutput
@@ -68,8 +75,11 @@ class UniRigAR(ModelSpec):
         elif FLASH_ATTN_AVAILABLE:
             print(f"[UniRigAR] Using flash_attention_2")
 
-        print(f"[UniRigAR] Loading transformer model from: {_d.get('pretrained_model_name_or_path', 'config')}")
-        llm_config = AutoConfig.from_pretrained(**_d)
+        # Build config from local JSON file (no HuggingFace download)
+        config_dict = _OPT_350M_CONFIG.copy()
+        config_dict['vocab_size'] = _d['vocab_size']  # Override with tokenizer vocab
+        print(f"[UniRigAR] Loading transformer model from local OPT-350m config")
+        llm_config = OPTConfig(**config_dict)
         # Force float32 precision for the model
         llm_config.torch_dtype = torch.float32
         # Force enable pre_norm

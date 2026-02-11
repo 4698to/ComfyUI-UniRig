@@ -10,7 +10,7 @@ from pathlib import Path
 from comfy_env import isolated
 
 # Add lib to path for mia module (needed for torch.load unpickling)
-LIB_DIR = Path(__file__).parent.parent / "lib"
+LIB_DIR = Path(__file__).parent / "lib"  # lib is inside nodes/
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
