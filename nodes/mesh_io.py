@@ -104,10 +104,13 @@ def load_fbx_with_blender(file_path: str) -> Tuple[Optional[trimesh.Trimesh], st
             print(f"[UniRigLoadMesh] Loading converted GLB: {glb_path}")
 
             # Load the converted GLB with trimesh
-            loaded = trimesh.load(glb_path, force='mesh')
+            # Use process=False and maintain_order=True to preserve mesh.visual (textures/materials)
+            # Do NOT use force='mesh' as it can lose visual/texture data during Scene-to-mesh conversion
+            loaded = trimesh.load(glb_path, process=False, maintain_order=True)
 
             # Handle Scene vs Mesh
             if isinstance(loaded, trimesh.Scene):
+                # Use dump with concatenate=True to merge geometries while preserving visual data
                 mesh = loaded.dump(concatenate=True)
             else:
                 mesh = loaded
@@ -158,15 +161,40 @@ def load_mesh_file(file_path: str) -> Tuple[Optional[trimesh.Trimesh], str]:
         print(f"[UniRigLoadMesh] Loading: {file_path}")
 
         # Try to load with trimesh first (supports many formats)
-        loaded = trimesh.load(file_path, force='mesh')
+        # Do NOT use force='mesh' as it can lose visual/texture data during Scene-to-mesh conversion
+        # Use process=False and maintain_order=True to preserve mesh.visual (textures/materials)
+        loaded = trimesh.load(file_path, process=False, maintain_order=True)
 
         print(f"[UniRigLoadMesh] Loaded type: {type(loaded).__name__}")
+
+        # Debug: Check visual data immediately after load
+        if isinstance(loaded, trimesh.Scene):
+            print(f"[UniRigLoadMesh] Scene has {len(loaded.geometry)} geometries")
+            for name, geom in loaded.geometry.items():
+                if hasattr(geom, 'visual'):
+                    print(f"[UniRigLoadMesh]   Geometry '{name}': visual type = {type(geom.visual).__name__}")
+                    if hasattr(geom.visual, 'material'):
+                        mat = geom.visual.material
+                        print(f"[UniRigLoadMesh]     Material: {type(mat).__name__}")
+                        if hasattr(mat, 'baseColorTexture') and mat.baseColorTexture is not None:
+                            print(f"[UniRigLoadMesh]     Has baseColorTexture: {mat.baseColorTexture.shape if hasattr(mat.baseColorTexture, 'shape') else 'yes'}")
+                        if hasattr(mat, 'image') and mat.image is not None:
+                            print(f"[UniRigLoadMesh]     Has image: {mat.image.size if hasattr(mat.image, 'size') else 'yes'}")
+        else:
+            if hasattr(loaded, 'visual'):
+                print(f"[UniRigLoadMesh] Mesh visual type: {type(loaded.visual).__name__}")
+                if hasattr(loaded.visual, 'material'):
+                    mat = loaded.visual.material
+                    print(f"[UniRigLoadMesh]   Material: {type(mat).__name__}")
 
         # Handle case where trimesh.load returns a Scene instead of a mesh
         if isinstance(loaded, trimesh.Scene):
             print(f"[UniRigLoadMesh] Converting Scene to single mesh (scene has {len(loaded.geometry)} geometries)")
-            # If it's a scene, dump it to a single mesh
+            # Use dump with concatenate=True to merge geometries while preserving visual data
             mesh = loaded.dump(concatenate=True)
+            print(f"[UniRigLoadMesh] After dump(): visual type = {type(mesh.visual).__name__ if hasattr(mesh, 'visual') else 'None'}")
+            if hasattr(mesh, 'visual') and hasattr(mesh.visual, 'material'):
+                print(f"[UniRigLoadMesh] After dump(): material = {type(mesh.visual.material).__name__}")
         else:
             mesh = loaded
 
@@ -175,20 +203,35 @@ def load_mesh_file(file_path: str) -> Tuple[Optional[trimesh.Trimesh], str]:
 
         print(f"[UniRigLoadMesh] Initial mesh: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces")
 
+        # Debug: Check visual after initial processing
+        if hasattr(mesh, 'visual'):
+            print(f"[UniRigLoadMesh] Visual type: {type(mesh.visual).__name__}")
+            if hasattr(mesh.visual, 'uv') and mesh.visual.uv is not None:
+                print(f"[UniRigLoadMesh]   Has UV coords: {mesh.visual.uv.shape}")
+            if hasattr(mesh.visual, 'material') and mesh.visual.material is not None:
+                mat = mesh.visual.material
+                print(f"[UniRigLoadMesh]   Material type: {type(mat).__name__}")
+                if hasattr(mat, 'baseColorTexture') and mat.baseColorTexture is not None:
+                    print(f"[UniRigLoadMesh]   Has baseColorTexture!")
+                if hasattr(mat, 'image') and mat.image is not None:
+                    print(f"[UniRigLoadMesh]   Has image texture!")
+        else:
+            print(f"[UniRigLoadMesh] WARNING: No visual attribute on mesh!")
+
         # Ensure mesh is properly triangulated
         if hasattr(mesh, 'faces') and len(mesh.faces) > 0:
             # Check if faces are triangular
             if mesh.faces.shape[1] != 3:
                 print(f"[UniRigLoadMesh] Warning: Mesh has non-triangular faces, triangulating...")
-                mesh = trimesh.Trimesh(vertices=mesh.vertices, faces=mesh.faces, process=True)
+                # Use process=False to preserve mesh.visual (textures/materials)
+                mesh = trimesh.Trimesh(vertices=mesh.vertices, faces=mesh.faces, process=False, maintain_order=True)
                 print(f"[UniRigLoadMesh] After triangulation: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces")
 
         # Count before cleanup
         verts_before = len(mesh.vertices)
         faces_before = len(mesh.faces)
 
-        # Merge duplicate vertices and clean up
-        mesh.merge_vertices()
+        # NOTE: We do NOT call mesh.merge_vertices() here as it destroys mesh.visual (textures/materials)
 
         # Remove duplicate and degenerate faces (trimesh 4.x compatible)
         # unique_faces() returns boolean mask of non-duplicate faces
@@ -224,14 +267,14 @@ def load_mesh_file(file_path: str) -> Tuple[Optional[trimesh.Trimesh], str]:
 
             print(f"[UniRigLoadMesh] libigl loaded: {len(v)} vertices, {len(f)} faces")
 
-            mesh = trimesh.Trimesh(vertices=v, faces=f, process=True)
+            # Use process=False to preserve mesh.visual (textures/materials)
+            mesh = trimesh.Trimesh(vertices=v, faces=f, process=False, maintain_order=True)
 
             # Count before cleanup
             verts_before = len(mesh.vertices)
             faces_before = len(mesh.faces)
 
-            # Clean up the mesh
-            mesh.merge_vertices()
+            # NOTE: We do NOT call mesh.merge_vertices() here as it destroys mesh.visual (textures/materials)
 
             # Remove duplicate and degenerate faces (trimesh 4.x compatible)
             unique_mask = mesh.unique_faces()

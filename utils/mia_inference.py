@@ -256,6 +256,22 @@ def run_mia_inference(
     print(f"[MIA] Starting inference...")
     print(f"[MIA] Options: no_fingers={no_fingers}, use_normal={use_normal}, reset_to_rest={reset_to_rest}")
 
+    # Debug: Check input mesh visual before any processing
+    print(f"[MIA] Input mesh: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces")
+    if hasattr(mesh, 'visual'):
+        print(f"[MIA] Input mesh visual type: {type(mesh.visual).__name__}")
+        if hasattr(mesh.visual, 'uv') and mesh.visual.uv is not None:
+            print(f"[MIA]   Has UV coords: {mesh.visual.uv.shape}")
+        if hasattr(mesh.visual, 'material') and mesh.visual.material is not None:
+            mat = mesh.visual.material
+            print(f"[MIA]   Material type: {type(mat).__name__}")
+            if hasattr(mat, 'baseColorTexture') and mat.baseColorTexture is not None:
+                print(f"[MIA]   Has baseColorTexture!")
+            if hasattr(mat, 'image') and mat.image is not None:
+                print(f"[MIA]   Has image texture!")
+    else:
+        print(f"[MIA] WARNING: Input mesh has no visual attribute!")
+
     # Prepare input
     print(f"[MIA] Preparing input...")
     data = prepare_input(
@@ -265,6 +281,20 @@ def run_mia_inference(
         geo_resample_ratio=models["geo_resample_ratio"],
         get_normals=use_normal,
     )
+
+    # Debug: Check data.mesh visual after prepare_input
+    if hasattr(data, 'mesh') and data.mesh is not None:
+        print(f"[MIA] After prepare_input: data.mesh has {len(data.mesh.vertices)} vertices")
+        if hasattr(data.mesh, 'visual'):
+            print(f"[MIA]   data.mesh visual type: {type(data.mesh.visual).__name__}")
+            if hasattr(data.mesh.visual, 'uv') and data.mesh.visual.uv is not None:
+                print(f"[MIA]   Has UV coords: {data.mesh.visual.uv.shape}")
+            if hasattr(data.mesh.visual, 'material') and data.mesh.visual.material is not None:
+                print(f"[MIA]   Has material: {type(data.mesh.visual.material).__name__}")
+        else:
+            print(f"[MIA]   WARNING: data.mesh has no visual attribute!")
+    else:
+        print(f"[MIA] WARNING: data.mesh is None or missing!")
 
     # Preprocess (normalize, coarse joint localization)
     print(f"[MIA] Preprocessing...")
@@ -355,13 +385,50 @@ def _export_mia_fbx_direct(
     bw = data["bw"]
     pose = data.get("pose")
     bones_idx_dict = dict(data["bones_idx_dict"])
+
+    # Debug: Check mesh visual before export
+    print(f"[MIA Export] Mesh to export: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces")
+    if hasattr(mesh, 'visual'):
+        print(f"[MIA Export] Mesh visual type: {type(mesh.visual).__name__}")
+        if hasattr(mesh.visual, 'uv') and mesh.visual.uv is not None:
+            print(f"[MIA Export]   Has UV coords: {mesh.visual.uv.shape}")
+        if hasattr(mesh.visual, 'material') and mesh.visual.material is not None:
+            mat = mesh.visual.material
+            print(f"[MIA Export]   Material type: {type(mat).__name__}")
+            if hasattr(mat, 'baseColorTexture') and mat.baseColorTexture is not None:
+                print(f"[MIA Export]   Has baseColorTexture!")
+            if hasattr(mat, 'image') and mat.image is not None:
+                print(f"[MIA Export]   Has image texture!")
+    else:
+        print(f"[MIA Export] WARNING: Mesh has no visual attribute!")
     parent_indices = data.get("parent_indices")
 
-    # Export mesh to temp file
-    temp_mesh = tempfile.NamedTemporaryFile(suffix=".glb", delete=False)
-    mesh_path = temp_mesh.name
-    temp_mesh.close()
+    # Export processed mesh to temp GLB for import into Blender
+    # Textures are preserved because mesh.visual is now intact (fix in mesh_io.py)
+    temp_mesh_file = tempfile.NamedTemporaryFile(suffix=".glb", delete=False)
+    mesh_path = temp_mesh_file.name
+    temp_mesh_file.close()
+
+    # Debug: Check what we're exporting
+    print(f"[MIA Export] About to export mesh to: {mesh_path}")
+    print(f"[MIA Export] Mesh has visual: {hasattr(mesh, 'visual')}")
+    if hasattr(mesh, 'visual') and mesh.visual is not None:
+        visual = mesh.visual
+        print(f"[MIA Export] Visual kind: {visual.kind if hasattr(visual, 'kind') else 'unknown'}")
+        if hasattr(visual, 'uv') and visual.uv is not None:
+            print(f"[MIA Export] Has UV: shape={visual.uv.shape}")
+        if hasattr(visual, 'material') and visual.material is not None:
+            mat = visual.material
+            print(f"[MIA Export] Material: {type(mat).__name__}")
+            # Check for PBRMaterial attributes
+            for attr in ['baseColorTexture', 'image', 'baseColorFactor']:
+                if hasattr(mat, attr):
+                    val = getattr(mat, attr)
+                    if val is not None:
+                        print(f"[MIA Export]   {attr}: {type(val).__name__}")
+
     mesh.export(mesh_path)
+    print(f"[MIA Export] Exported GLB size: {os.path.getsize(mesh_path)} bytes")
 
     try:
         print(f"[MIA Export] Weights: {bw.shape}, Joints: {joints.shape}, Bones: {len(bones_idx_dict)}")
@@ -398,11 +465,26 @@ def _export_mia_fbx_direct(
         bpy.ops.pose.transforms_clear()
         bpy.ops.object.mode_set(mode='OBJECT')
 
-        # Load input mesh
+        # Load input mesh from temp GLB
         old_objs = set(bpy.context.scene.objects)
         bpy.ops.import_scene.gltf(filepath=mesh_path)
         new_objs = set(bpy.context.scene.objects) - old_objs
         input_meshes = [obj for obj in new_objs if obj.type == "MESH"]
+
+        # Debug: Check materials after import
+        for obj in input_meshes:
+            print(f"[MIA Export] Imported mesh '{obj.name}': {len(obj.data.vertices)} verts")
+            if obj.data.materials:
+                print(f"[MIA Export]   Has {len(obj.data.materials)} material(s)")
+                for i, mat in enumerate(obj.data.materials):
+                    if mat:
+                        print(f"[MIA Export]   Material[{i}]: {mat.name}")
+                        if mat.use_nodes and mat.node_tree:
+                            for node in mat.node_tree.nodes:
+                                if node.type == 'TEX_IMAGE' and node.image:
+                                    print(f"[MIA Export]     Texture: {node.image.name} ({node.image.size[0]}x{node.image.size[1]})")
+            else:
+                print(f"[MIA Export]   No materials!")
 
         if not input_meshes:
             raise RuntimeError("No mesh found in input!")
@@ -523,6 +605,50 @@ def _export_mia_fbx_direct(
             print(f"[MIA Export] Applying pose-to-rest transformation...")
             _apply_pose_to_rest_inline(armature, pose, bones_idx_dict, parent_indices, input_meshes, joints_normalized)
 
+        # Debug: Check materials before FBX export
+        print(f"[MIA Export] Pre-FBX export material check:")
+        for mesh_obj in input_meshes:
+            print(f"[MIA Export]   Mesh '{mesh_obj.name}': {len(mesh_obj.data.vertices)} verts")
+            if mesh_obj.data.materials:
+                print(f"[MIA Export]     Has {len(mesh_obj.data.materials)} material(s)")
+                for i, mat in enumerate(mesh_obj.data.materials):
+                    if mat:
+                        print(f"[MIA Export]     Material[{i}]: {mat.name}")
+                        if mat.use_nodes and mat.node_tree:
+                            for node in mat.node_tree.nodes:
+                                if node.type == 'TEX_IMAGE' and node.image:
+                                    img = node.image
+                                    print(f"[MIA Export]       Texture: {img.name} ({img.size[0]}x{img.size[1]}) packed={img.packed_file is not None}")
+            else:
+                print(f"[MIA Export]     WARNING: No materials!")
+
+        # Fix image filepaths and pack for FBX embedding
+        # FBX exporter needs proper filepaths with filenames, not just directories
+        print(f"[MIA Export] Fixing image filepaths for FBX export...")
+        fbm_dir = output_path.rsplit('.', 1)[0] + '.fbm'
+        os.makedirs(fbm_dir, exist_ok=True)
+
+        for img in bpy.data.images:
+            if img.size[0] > 0 and img.size[1] > 0:  # Valid image
+                # Create a proper filepath with filename
+                img_filename = f"{img.name}.png"
+                img_filepath = os.path.join(fbm_dir, img_filename)
+
+                # Save the image to disk first (FBX exporter needs this)
+                old_filepath = img.filepath
+                img.filepath_raw = img_filepath
+                img.file_format = 'PNG'
+                img.save()
+                print(f"[MIA Export]   Saved texture: {img_filepath}")
+
+                # Now pack it
+                if img.packed_file is None:
+                    try:
+                        img.pack()
+                        print(f"[MIA Export]   Packed: {img.name}")
+                    except Exception as e:
+                        print(f"[MIA Export]   Failed to pack {img.name}: {e}")
+
         # Export FBX
         bpy.context.view_layer.update()
         bpy.ops.export_scene.fbx(
@@ -536,7 +662,25 @@ def _export_mia_fbx_direct(
         )
         print(f"[MIA Export] Exported to: {output_path}")
 
+        # Also export GLB (better texture support for preview tools)
+        glb_path = output_path.rsplit('.', 1)[0] + '.glb'
+        bpy.ops.export_scene.gltf(
+            filepath=glb_path,
+            export_format='GLB',
+            export_texcoords=True,
+            export_normals=True,
+            export_materials='EXPORT',
+            export_image_format='AUTO',
+        )
+        print(f"[MIA Export] Also exported GLB: {glb_path}")
+
+        # Debug: Check output file size
+        if os.path.exists(output_path):
+            fbx_size = os.path.getsize(output_path)
+            print(f"[MIA Export] FBX file size: {fbx_size} bytes")
+
     finally:
+        # Clean up temp mesh file
         if os.path.exists(mesh_path):
             os.remove(mesh_path)
 

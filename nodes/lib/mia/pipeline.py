@@ -58,7 +58,7 @@ def get_hips_transform(hips, rightupleg, leftupleg):
     right = right / (torch.norm(right, dim=-1, keepdim=True) + 1e-8)
 
     # Compute forward as cross product
-    forward = torch.cross(right, up.expand_as(right), dim=-1)
+    forward = torch.cross(up.expand_as(right), right, dim=-1)
     forward = forward / (torch.norm(forward, dim=-1, keepdim=True) + 1e-8)
 
     # Recompute right to ensure orthogonality
