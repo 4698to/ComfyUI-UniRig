@@ -339,10 +339,10 @@ class UniRigExtractSkeletonNew:
                         "Run: pip install -r requirements.txt"
                     )
             else:
-                raise RuntimeError(
-                    "skeleton_model does not have a cached model. "
-                    "Ensure UniRigLoadSkeletonModel has 'cache_to_gpu' enabled."
-                )
+                print(f"[UniRigExtractSkeletonNew] VRAM saving mode: No cached model available.")
+                print(f"[UniRigExtractSkeletonNew] Falling back to subprocess inference...")
+                # We will handle fallback later in the inference step
+                pass
 
         print(f"[UniRigExtractSkeletonNew] Using pre-loaded cached model")
         task_config_path = skeleton_model.get("task_config_path")
@@ -421,62 +421,122 @@ class UniRigExtractSkeletonNew:
                 print(f"[UniRigExtractSkeletonNew] Blender error: {e}")
                 raise
 
-            # Step 2: Run skeleton inference with CACHED MODEL ONLY
+            # Step 2: Run skeleton inference
             step_start = time.time()
-            print(f"[UniRigExtractSkeletonNew] Step 2: Running skeleton inference with cached model...")
-
-            model_cache = _get_model_cache()
-            if not model_cache:
-                raise RuntimeError(
-                    "Model cache module not available. "
-                    "Cannot run cached inference."
-                )
-
-            cache_key = skeleton_model["model_cache_key"]
-            print(f"[UniRigExtractSkeletonNew] Using cached model: {cache_key}")
-
-            # Map skeleton template to cls token
-            cls_value = None  # auto (let model decide)
-            if skeleton_template == "vroid":
-                cls_value = "vroid"
-            elif skeleton_template == "articulationxl":
-                cls_value = "articulationxl"
-
-            if cls_value:
-                print(f"[UniRigExtractSkeletonNew] Forcing skeleton template: {cls_value}")
-            else:
-                print(f"[UniRigExtractSkeletonNew] Using auto skeleton detection")
-
-            request_data = {
-                "seed": seed,
-                "input": input_path,
-                "output": output_path,
-                "npz_dir": tmpdir,
-                "cls": cls_value,
-                "data_name": "raw_data.npz",
-            }
-
-            try:
-                result = model_cache.run_inference(cache_key, request_data)
-                if "error" in result:
-                    error_msg = result['error']
-                    traceback_msg = result.get('traceback', 'No traceback available')
+            cache_key = skeleton_model.get("model_cache_key")
+            
+            if cache_key:
+                print(f"[UniRigExtractSkeletonNew] Step 2: Running skeleton inference with cached model...")
+                model_cache = _get_model_cache()
+                if not model_cache:
                     raise RuntimeError(
-                        f"Cached model inference failed: {error_msg}\n"
-                        f"Traceback:\n{traceback_msg}\n\n"
+                        "Model cache module not available. "
+                        "Cannot run cached inference."
+                    )
+
+                print(f"[UniRigExtractSkeletonNew] Using cached model: {cache_key}")
+
+                # Map skeleton template to cls token
+                cls_value = None  # auto (let model decide)
+                if skeleton_template == "vroid":
+                    cls_value = "vroid"
+                elif skeleton_template == "articulationxl":
+                    cls_value = "articulationxl"
+
+                if cls_value:
+                    print(f"[UniRigExtractSkeletonNew] Forcing skeleton template: {cls_value}")
+                else:
+                    print(f"[UniRigExtractSkeletonNew] Using auto skeleton detection")
+
+                request_data = {
+                    "seed": seed,
+                    "input": input_path,
+                    "output": output_path,
+                    "npz_dir": tmpdir,
+                    "cls": cls_value,
+                    "data_name": "raw_data.npz",
+                }
+
+                try:
+                    result = model_cache.run_inference(cache_key, request_data)
+                    if "error" in result:
+                        error_msg = result['error']
+                        traceback_msg = result.get('traceback', 'No traceback available')
+                        raise RuntimeError(
+                            f"Cached model inference failed: {error_msg}\n"
+                            f"Traceback:\n{traceback_msg}\n\n"
+                            f"This node requires a working cached model. "
+                            f"If you need fallback support, use UniRigExtractSkeleton instead."
+                        )
+
+                    inference_time = time.time() - step_start
+                    print(f"[UniRigExtractSkeletonNew] ✓ Cached inference completed in {inference_time:.2f}s")
+
+                except Exception as e:
+                    raise RuntimeError(
+                        f"Cached model inference exception: {str(e)}\n\n"
                         f"This node requires a working cached model. "
                         f"If you need fallback support, use UniRigExtractSkeleton instead."
                     )
-
-                inference_time = time.time() - step_start
-                print(f"[UniRigExtractSkeletonNew] ✓ Cached inference completed in {inference_time:.2f}s")
-
-            except Exception as e:
-                raise RuntimeError(
-                    f"Cached model inference exception: {str(e)}\n\n"
-                    f"This node requires a working cached model. "
-                    f"If you need fallback support, use UniRigExtractSkeleton instead."
-                )
+            else:
+                # FALLBACK TO SUBPROCESS (VRAM SAVING MODE)
+                print(f"[UniRigExtractSkeletonNew] Step 2: Running skeleton inference with subprocess (VRAM saving mode)...")
+                
+                # Use lib/unirig/run.py directly
+                unirig_run_py = os.path.join(UNIRIG_PATH, "run.py")
+                if not os.path.exists(unirig_run_py):
+                     raise RuntimeError(f"UniRig run script not found at {unirig_run_py}")
+                
+                # Map skeleton template to cls token
+                cls_value = None
+                if skeleton_template == "vroid":
+                    cls_value = "vroid"
+                elif skeleton_template == "articulationxl":
+                    cls_value = "articulationxl"
+                
+                # Build command
+                run_cmd = [
+                    sys.executable, unirig_run_py,
+                    "--task", task_config_path,
+                    "--seed", str(seed),
+                    "--input", input_path,
+                    "--output", output_path,
+                    "--npz_dir", tmpdir,
+                    "--data_name", "raw_data.npz",
+                ]
+                
+                if cls_value:
+                    run_cmd.extend(["--cls", cls_value])
+                
+                print(f"[UniRigExtractSkeletonNew] Running command: {' '.join(run_cmd)}")
+                
+                env = setup_subprocess_env()
+                try:
+                    result = subprocess.run(
+                        run_cmd,
+                        capture_output=True,
+                        text=True,
+                        env=env,
+                        cwd=UNIRIG_PATH,
+                        timeout=INFERENCE_TIMEOUT
+                    )
+                    
+                    if result.stdout:
+                         print(f"[UniRigExtractSkeletonNew] Run output:\n{result.stdout}")
+                    
+                    if result.returncode != 0:
+                        raise RuntimeError(
+                            f"UniRig subprocess inference failed with exit code {result.returncode}\n"
+                            f"Error output:\n{result.stderr}"
+                        )
+                        
+                    inference_time = time.time() - step_start
+                    print(f"[UniRigExtractSkeletonNew] ✓ Subprocess inference completed in {inference_time:.2f}s")
+                except subprocess.TimeoutExpired:
+                    raise RuntimeError(f"UniRig inference timed out (>{INFERENCE_TIMEOUT}s)")
+                except Exception as e:
+                    print(f"[UniRigExtractSkeletonNew] Inference error: {e}")
+                    raise
 
             # Load and parse FBX output
             if not os.path.exists(output_path):
@@ -544,6 +604,7 @@ class UniRigExtractSkeletonNew:
                 # Pre-extract optional fields to avoid keeping file handle open
                 skeleton_bone_parents = np.array(skeleton_data['bone_parents']) if 'bone_parents' in skeleton_data else None
                 skeleton_bone_to_head = np.array(skeleton_data['bone_to_head_vertex']) if 'bone_to_head_vertex' in skeleton_data else None
+                skeleton_bone_names = list(skeleton_data['bone_names']) if 'bone_names' in skeleton_data else None
             # File handle released immediately after with block
 
             print(f"[UniRigExtractSkeletonNew] Extracted {len(all_joints)} joints, {len(edges)} bones")
@@ -700,9 +761,8 @@ class UniRigExtractSkeletonNew:
                     if model_bone_names is not None:
                         print(f"[UniRigExtractSkeletonNew] Model names count mismatch: {len(model_bone_names)} names vs {num_bones} bones")
                     # Fallback to Blender-parsed names
-                    bone_names = skeleton_data.get('bone_names', None)
-                    if bone_names is not None:
-                        names_list = [str(n) for n in bone_names]
+                    if skeleton_bone_names is not None:
+                        names_list = [str(n) for n in skeleton_bone_names]
                         print(f"[UniRigExtractSkeletonNew] Using {len(names_list)} Blender-parsed bone names (fallback)")
                     else:
                         names_list = [f"bone_{i}" for i in range(num_bones)]

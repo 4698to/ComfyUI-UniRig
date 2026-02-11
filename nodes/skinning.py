@@ -187,10 +187,10 @@ class UniRigApplySkinningMLNew:
                         "Run: pip install -r requirements.txt"
                     )
             else:
-                raise RuntimeError(
-                    "skinning_model does not have a cached model. "
-                    "Ensure UniRigLoadSkinningModel has 'cache_to_gpu' enabled."
-                )
+                print(f"[UniRigApplySkinningMLNew] VRAM saving mode: No cached model available.")
+                print(f"[UniRigApplySkinningMLNew] Falling back to subprocess inference...")
+                # We will handle fallback later in the inference step
+                pass
 
         print(f"[UniRigApplySkinningMLNew] Using pre-loaded cached model")
         task_config_path = skinning_model.get("task_config_path")
@@ -260,10 +260,9 @@ class UniRigApplySkinningMLNew:
         normalized_mesh.export(input_glb)
         print(f"[UniRigApplySkinningMLNew] Exported mesh: {normalized_mesh.vertices.shape[0]} vertices, {normalized_mesh.faces.shape[0]} faces")
 
-        # Run skinning inference with CACHED MODEL ONLY
+        # Run skinning inference
         step_start = time.time()
-        print(f"[UniRigApplySkinningMLNew] Running skinning inference with cached model...")
-
+        cache_key = skinning_model.get("model_cache_key")
         output_fbx = os.path.join(temp_dir, "rigged.fbx")
 
         # Build config overrides from optional parameters
@@ -280,47 +279,108 @@ class UniRigApplySkinningMLNew:
         if config_overrides:
             print(f"[UniRigApplySkinningMLNew] Config overrides: {config_overrides}")
 
-        model_cache = _get_model_cache()
-        if not model_cache:
-            raise RuntimeError(
-                "Model cache module not available. "
-                "Cannot run cached inference."
-            )
-
-        cache_key = skinning_model["model_cache_key"]
-        print(f"[UniRigApplySkinningMLNew] Using cached model: {cache_key}")
-
-        request_data = {
-            "seed": 123,
-            "input": input_glb,
-            "output": output_fbx,
-            "npz_dir": temp_dir,
-            "cls": skeleton.get('cls'),
-            "data_name": "predict_skeleton.npz",
-            "config_overrides": config_overrides,
-        }
-
-        try:
-            result = model_cache.run_inference(cache_key, request_data)
-            if "error" in result:
-                error_msg = result['error']
-                traceback_msg = result.get('traceback', 'No traceback available')
+        if cache_key:
+            print(f"[UniRigApplySkinningMLNew] Running skinning inference with cached model...")
+            model_cache = _get_model_cache()
+            if not model_cache:
                 raise RuntimeError(
-                    f"Cached model inference failed: {error_msg}\n"
-                    f"Traceback:\n{traceback_msg}\n\n"
+                    "Model cache module not available. "
+                    "Cannot run cached inference."
+                )
+
+            print(f"[UniRigApplySkinningMLNew] Using cached model: {cache_key}")
+
+            request_data = {
+                "seed": 123,
+                "input": input_glb,
+                "output": output_fbx,
+                "npz_dir": temp_dir,
+                "cls": skeleton.get('cls'),
+                "data_name": "predict_skeleton.npz",
+                "config_overrides": config_overrides,
+            }
+
+            try:
+                result = model_cache.run_inference(cache_key, request_data)
+                if "error" in result:
+                    error_msg = result['error']
+                    traceback_msg = result.get('traceback', 'No traceback available')
+                    raise RuntimeError(
+                        f"Cached model inference failed: {error_msg}\n"
+                        f"Traceback:\n{traceback_msg}\n\n"
+                        f"This node requires a working cached model. "
+                        f"If you need fallback support, use UniRigApplySkinningML instead."
+                    )
+
+                inference_time = time.time() - step_start
+                print(f"[UniRigApplySkinningMLNew] ✓ Cached inference completed in {inference_time:.2f}s")
+
+            except Exception as e:
+                raise RuntimeError(
+                    f"Cached model inference exception: {str(e)}\n\n"
                     f"This node requires a working cached model. "
                     f"If you need fallback support, use UniRigApplySkinningML instead."
                 )
-
-            inference_time = time.time() - step_start
-            print(f"[UniRigApplySkinningMLNew] ✓ Cached inference completed in {inference_time:.2f}s")
-
-        except Exception as e:
-            raise RuntimeError(
-                f"Cached model inference exception: {str(e)}\n\n"
-                f"This node requires a working cached model. "
-                f"If you need fallback support, use UniRigApplySkinningML instead."
-            )
+        else:
+            # FALLBACK TO SUBPROCESS (VRAM SAVING MODE)
+            print(f"[UniRigApplySkinningMLNew] Running skinning inference with subprocess (VRAM saving mode)...")
+            
+            # Use lib/unirig/run.py directly
+            unirig_run_py = os.path.join(UNIRIG_PATH, "run.py")
+            if not os.path.exists(unirig_run_py):
+                 raise RuntimeError(f"UniRig run script not found at {unirig_run_py}")
+            
+            # Build command
+            run_cmd = [
+                sys.executable, unirig_run_py,
+                "--task", task_config_path,
+                "--seed", "123",
+                "--input", input_glb,
+                "--output", output_fbx,
+                "--npz_dir", temp_dir,
+                "--data_name", "predict_skeleton.npz",
+            ]
+            
+            # Add config overrides as environment variable
+            # (unirig/run.py supports UNIRIG_CONFIG_OVERRIDES)
+            import json
+            env = setup_subprocess_env()
+            if config_overrides:
+                env['UNIRIG_CONFIG_OVERRIDES'] = json.dumps(config_overrides)
+            
+            # Add cls if available
+            cls_value = skeleton.get('cls')
+            if cls_value:
+                run_cmd.extend(["--cls", cls_value])
+            
+            print(f"[UniRigApplySkinningMLNew] Running command: {' '.join(run_cmd)}")
+            
+            try:
+                result = subprocess.run(
+                    run_cmd,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    cwd=UNIRIG_PATH,
+                    timeout=INFERENCE_TIMEOUT
+                )
+                
+                if result.stdout:
+                     print(f"[UniRigApplySkinningMLNew] Run output:\n{result.stdout}")
+                
+                if result.returncode != 0:
+                    raise RuntimeError(
+                        f"UniRig subprocess inference failed with exit code {result.returncode}\n"
+                        f"Error output:\n{result.stderr}"
+                    )
+                    
+                inference_time = time.time() - step_start
+                print(f"[UniRigApplySkinningMLNew] ✓ Subprocess inference completed in {inference_time:.2f}s")
+            except subprocess.TimeoutExpired:
+                raise RuntimeError(f"UniRig inference timed out (>{INFERENCE_TIMEOUT}s)")
+            except Exception as e:
+                print(f"[UniRigApplySkinningMLNew] Inference error: {e}")
+                raise
 
         print(f"[UniRigApplySkinningMLNew] Skinning completed")
 

@@ -144,6 +144,23 @@ class UniRigLoadSkeletonModel:
             # Update cache_to_gpu setting in case it changed
             cached_model["cache_to_gpu"] = cache_to_gpu
             print(f"[UniRigLoadSkeletonModel] Using cached model configuration")
+            
+            # If cache_to_gpu is enabled but model is not in GPU memory, load it now
+            if cache_to_gpu and cached_model.get("model_cache_key") is None:
+                model_cache = _get_model_cache()
+                if model_cache:
+                    print(f"[UniRigLoadSkeletonModel] Loading model into GPU memory (delayed load)...")
+                    try:
+                        model_cache_key = model_cache.load_model_into_memory(
+                            model_type="skeleton",
+                            task_config_path=cached_model.get("task_config_path"),
+                            cache_to_gpu=True
+                        )
+                        cached_model["model_cache_key"] = model_cache_key
+                        print(f"[UniRigLoadSkeletonModel] Model loaded into GPU memory")
+                    except Exception as e:
+                        print(f"[UniRigLoadSkeletonModel] Warning: Failed to load into GPU memory: {e}")
+                
             return (cached_model,)
 
         _ensure_unirig_in_path()
@@ -291,6 +308,23 @@ class UniRigLoadSkinningModel:
             # Update cache_to_gpu setting in case it changed
             cached_model["cache_to_gpu"] = cache_to_gpu
             print(f"[UniRigLoadSkinningModel] Using cached model configuration")
+            
+            # If cache_to_gpu is enabled but model is not in GPU memory, load it now
+            if cache_to_gpu and cached_model.get("model_cache_key") is None:
+                model_cache = _get_model_cache()
+                if model_cache:
+                    print(f"[UniRigLoadSkinningModel] Loading model into GPU memory (delayed load)...")
+                    try:
+                        model_cache_key = model_cache.load_model_into_memory(
+                            model_type="skinning",
+                            task_config_path=cached_model.get("task_config_path"),
+                            cache_to_gpu=True
+                        )
+                        cached_model["model_cache_key"] = model_cache_key
+                        print(f"[UniRigLoadSkinningModel] Model loaded into GPU memory")
+                    except Exception as e:
+                        print(f"[UniRigLoadSkinningModel] Warning: Failed to load into GPU memory: {e}")
+                        
             return (cached_model,)
 
         _ensure_unirig_in_path()
