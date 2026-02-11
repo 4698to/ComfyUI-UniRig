@@ -150,24 +150,6 @@ def ensure_vcredist():
 # Main Installation
 # =============================================================================
 
-def ensure_comfy_env():
-    """Ensure comfy-env is installed before using it."""
-    try:
-        import comfy_env
-        return True
-    except ImportError:
-        print("[UniRig] Installing comfy-env...")
-        try:
-            subprocess.check_call([
-                sys.executable, "-m", "pip", "install", "comfy-env>=0.0.11"
-            ])
-            print("[UniRig] comfy-env installed successfully")
-            return True
-        except subprocess.CalledProcessError as e:
-            print(f"[UniRig] Failed to install comfy-env: {e}")
-            return False
-
-
 def main():
     """Main installation function."""
     print("\n" + "=" * 60)
@@ -178,11 +160,6 @@ def main():
     if not ensure_vcredist():
         print("[UniRig] WARNING: VC++ Redistributable installation failed.")
         print("[UniRig] Some features may not work. Continuing anyway...")
-
-    # Ensure comfy-env is installed
-    if not ensure_comfy_env():
-        print("[UniRig] ERROR: Could not install comfy-env")
-        return 1
 
     from comfy_env import IsolatedEnvManager, discover_config
 
