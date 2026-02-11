@@ -6,8 +6,6 @@ import os
 import time
 from pathlib import Path
 
-from comfy_env import isolated
-
 # ComfyUI folder paths
 try:
     import folder_paths
@@ -54,7 +52,6 @@ def _get_direct_animation():
     return _DIRECT_ANIMATION_MODULE if _DIRECT_ANIMATION_MODULE else None
 
 
-@isolated(env="unirig", import_paths=[".", ".."])
 class UniRigApplyAnimation:
     """
     Apply an animation to a rigged FBX model.

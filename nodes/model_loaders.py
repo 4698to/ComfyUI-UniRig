@@ -10,8 +10,6 @@ import sys
 import yaml
 from pathlib import Path
 
-from comfy_env import isolated
-
 # Lazy import for Box to avoid import errors before install.py runs
 def _get_box():
     """Lazy import for python-box."""
@@ -104,7 +102,6 @@ def _load_yaml_config(config_path: str):
     return Box(yaml.safe_load(open(config_path, 'r')))
 
 
-@isolated(env="unirig", import_paths=[".", ".."])
 class UniRigLoadSkeletonModel:
     """
     Load and cache the UniRig skeleton extraction model.
@@ -269,7 +266,6 @@ class UniRigLoadSkeletonModel:
             return (model_wrapper,)
 
 
-@isolated(env="unirig", import_paths=[".", ".."])
 class UniRigLoadSkinningModel:
     """
     Load and cache the UniRig skinning weight prediction model.
@@ -424,7 +420,6 @@ class UniRigLoadSkinningModel:
             return (model_wrapper,)
 
 
-@isolated(env="unirig", import_paths=[".", ".."])
 class UniRigLoadModel:
     """
     Load and cache both UniRig models (skeleton + skinning) for the rigging pipeline.

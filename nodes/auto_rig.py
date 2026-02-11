@@ -9,8 +9,6 @@ import os
 import sys
 import time
 
-from comfy_env import isolated
-
 # Support both relative imports (ComfyUI) and absolute imports (testing)
 try:
     from .skeleton_extraction import UniRigExtractSkeletonNew
@@ -20,7 +18,6 @@ except ImportError:
     from skinning import UniRigApplySkinningMLNew
 
 
-@isolated(env="unirig", import_paths=[".", ".."])
 class UniRigAutoRig:
     """
     Single node for complete rigging pipeline.

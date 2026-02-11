@@ -13,8 +13,6 @@ import numpy as np
 import time
 import folder_paths
 
-from comfy_env import isolated
-
 # Support both relative imports (ComfyUI) and absolute imports (testing)
 try:
     from .base import (
@@ -81,7 +79,6 @@ def _get_direct_inference():
     return _DIRECT_INFERENCE_MODULE if _DIRECT_INFERENCE_MODULE else None
 
 
-@isolated(env="unirig", import_paths=[".", ".."])
 class UniRigApplySkinningMLNew:
     """
     Apply skinning weights using ML.
