@@ -11,7 +11,6 @@ import sys
 from pathlib import Path
 
 import torch
-import comfy.model_management as mm
 
 log = logging.getLogger("unirig")
 
@@ -204,6 +203,7 @@ class UniRigLoadModel:
 
     def load_models(self, precision="auto", attn_backend="auto", **kwargs):
         """Download checkpoints and resolve precision/attention config."""
+        import comfy.model_management as mm
         # Resolve precision
         device = mm.get_torch_device()
         if precision == "auto":
@@ -252,6 +252,7 @@ class UniRigLoadModel:
 
 def clear_model_cache():
     """Clear the global model cache (configs, loaded models, MIA models)."""
+    import comfy.model_management as mm
     global _MODEL_CACHE
     _MODEL_CACHE.clear()
     mm.soft_empty_cache()
@@ -296,6 +297,7 @@ class MIALoadModel:
 
     def load_models(self, precision="auto", attn_backend="auto"):
         """Return MIA config with resolved precision."""
+        import comfy.model_management as mm
         device = mm.get_torch_device()
         if precision == "auto":
             if mm.should_use_bf16(device):
