@@ -23,7 +23,7 @@ ANIMATION_TEMPLATES_DIR = Path(COMFYUI_INPUT_FOLDER) / "animation_templates" if 
 
 # Direct animation module (bpy as Python module)
 try:
-    from .unirig.src.inference import direct_apply_animation as _direct_animation_module
+    from .unirig import direct_apply_animation as _direct_animation_module
 except ImportError as e:
     log.info("Direct animation not available: %s", e)
     _direct_animation_module = None

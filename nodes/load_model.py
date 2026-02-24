@@ -87,7 +87,7 @@ class UniRigLoadSkeletonModel:
 
         # Download checkpoint
         try:
-            from .unirig.src.inference.download import download
+            from .unirig.download import download
 
             task_config_path = os.path.join(
                 UNIRIG_PATH,
@@ -174,7 +174,7 @@ class UniRigLoadSkinningModel:
 
         # Download checkpoint
         try:
-            from .unirig.src.inference.download import download
+            from .unirig.download import download
 
             task_config_path = os.path.join(
                 UNIRIG_PATH,

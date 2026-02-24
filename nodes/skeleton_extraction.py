@@ -186,14 +186,14 @@ SMPL_DEFAULT_BONE_LENGTH = 0.1
 
 # Direct inference module
 try:
-    from .unirig.src.inference import direct as _direct_inference_module
+    from .unirig import direct as _direct_inference_module
 except ImportError as e:
     log.info("Direct inference not available: %s", e)
     _direct_inference_module = None
 
 # Direct preprocessing module (bpy as Python module)
 try:
-    from .unirig.src.inference import direct_preprocess as _direct_preprocess_module
+    from .unirig import direct_preprocess as _direct_preprocess_module
 except ImportError as e:
     log.info("Direct preprocessing not available: %s", e)
     _direct_preprocess_module = None
