@@ -74,7 +74,12 @@ class FeedForward(nn.Module):
     def forward(self, x):
         return self.drop_path(self.net(x))
 
+import logging
+_ae_log = logging.getLogger("unirig")
+
 class Attention(nn.Module):
+    _log_count = 0  # throttle debug output
+
     def __init__(self, query_dim, context_dim = None, heads = 8, dim_head = 64, drop_path_rate = 0.0):
         super().__init__()
         inner_dim = dim_head * heads
@@ -89,6 +94,10 @@ class Attention(nn.Module):
         self.drop_path = DropPath(drop_path_rate) if drop_path_rate > 0. else nn.Identity()
 
     def forward(self, x, context = None, mask = None, return_score=False):
+        if Attention._log_count < 3:
+            _ae_log.debug("MIA Attention: x=%s dtype=%s device=%s, heads=%d",
+                          list(x.shape), x.dtype, x.device, self.heads)
+            Attention._log_count += 1
         h = self.heads
 
         q = self.to_q(x)

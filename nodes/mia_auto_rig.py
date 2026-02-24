@@ -91,12 +91,11 @@ class MIAAutoRig:
         log.info("Options: no_fingers=%s, use_normal=%s, reset_to_rest=%s", no_fingers, use_normal, reset_to_rest)
 
         # model is a config dict from MIALoadModel - extract settings
-        cache_to_gpu = model.get("cache_to_gpu", True)
         dtype = model.get("dtype", "fp32")
-        log.info("Config: cache_to_gpu=%s, dtype=%s", cache_to_gpu, dtype)
+        log.info("Config: dtype=%s", dtype)
 
         # Load models internally (downloads from HuggingFace if needed)
-        cache_key = load_mia_models(cache_to_gpu=cache_to_gpu, dtype=dtype)
+        cache_key = load_mia_models(dtype=dtype)
         models = get_cached_models(cache_key)
 
         # Generate output filename

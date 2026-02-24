@@ -120,10 +120,6 @@ class TransformMLP(nn.Module):
         transl = self.transl_mlp(feat) if self.transl_dim > 0 else empty
         if self.rotation_dim > 0:
             if self.rotation_dim == 4:
-                # # Make sure the scalar part is positive
-                # scalar_sign = rotation[..., :1].sign().detach()
-                # scalar_sign[scalar_sign == 0] = 1
-                # rotation = rotation * scalar_sign
                 rotation_scalar = torch.exp(self.rotation_mlp_scalar(feat))
                 rotation_vector = self.rotation_mlp_vector(feat)
                 rotation = F.normalize(torch.cat([rotation_scalar, rotation_vector], dim=-1), dim=-1)
@@ -422,7 +418,10 @@ class PCAE(nn.Module):
         if adapt:
             model_state_dict = self.adapt_ckpt(model_state_dict)
         self.load_state_dict(model_state_dict, strict=strict)
-        log.info("Loaded model from %s", pth_path)
+        param_count = sum(p.numel() for p in self.parameters())
+        first_param = next(self.parameters())
+        log.info("Loaded %s (%.1fM params, dtype=%s, device=%s)",
+                 pth_path, param_count / 1e6, first_param.dtype, first_param.device)
         return self
 
     def load_base(self, pth_path: str):
@@ -456,15 +455,6 @@ class PCAE(nn.Module):
         assert N == self.base.num_inputs
         assert D == self.input_dim
 
-        # flattened = pc.view(B * N, D)
-        # batch = torch.arange(B).to(pc.device)
-        # batch = torch.repeat_interleave(batch, N)
-        # pos = flattened
-        # ratio = 1.0 * self.base.num_latents / N
-        # idx = fps(pos, batch, ratio=ratio)
-        # sampled_pc = pos[idx]
-        # sampled_pc = sampled_pc.view(B, -1, 3)
-
         N_hier = int(N * self.hierarchical_ratio)
         N_pc = [N - N_hier, N_hier]
         num_latents_hier = int(self.base.num_latents * self.hierarchical_ratio)
@@ -482,7 +472,6 @@ class PCAE(nn.Module):
             sampled_pc[:, latents_begin_idx[i] : latents_begin_idx[i] + N_latents[i], :] = pos[idx].view(B, -1, D)[
                 :, : N_latents[i], :
             ]
-        # import trimesh; trimesh.Trimesh(sampled_pc[0].cpu()).export("sample.ply")  # fmt: skip
 
         return sampled_pc
 
@@ -504,15 +493,6 @@ class PCAE(nn.Module):
         if extra_embeddings:
             if self.input_attention:
                 pc_embeddings = self.input_attn(pc_embeddings, torch.stack(extra_embeddings, dim=-2))
-                # pc_embeddings, attn_score = self.input_attn(
-                #     pc_embeddings, torch.stack(extra_embeddings, dim=-2), return_score=True
-                # )
-                # if pc.shape[1] > 512:
-                #     import matplotlib
-                #     import trimesh  # fmt: skip
-                #     cmap = matplotlib.colormaps.get_cmap("plasma")
-                #     vis_head = 0
-                #     trimesh.PointCloud(pc[0].cpu().numpy(), colors=cmap(attn_score[0, :, vis_head, -1].cpu().numpy())[:, :3], process=False).export("normal_attn.glb")  # fmt: skip
             else:
                 pc_embeddings = pc_embeddings + torch.stack(extra_embeddings, dim=0).sum(0)
 
@@ -590,6 +570,10 @@ class PCAE(nn.Module):
         Returns:
             [B, N2, `self.output_dim`]
         """
+        log.debug("PCAE.forward: pc=%s dtype=%s device=%s, queries=%s, weights_dtype=%s",
+                  list(pc.shape), pc.dtype, pc.device,
+                  list(queries.shape) if queries is not None else None,
+                  next(self.parameters()).dtype)
         if pc.shape[-1] > self.input_dim:
             pc = pc[..., : self.input_dim]
         x = self.encode(pc)
@@ -736,27 +720,6 @@ class Transformer(nn.Module):
 
         warnings.filterwarnings("ignore", category=UserWarning, module="torch.nn.modules.transformer")
 
-        # self.layers = nn.ModuleList([])
-        # for _ in range(depth):
-        #     self.layers.append(
-        #         nn.ModuleList(
-        #             [
-        #                 nn.LayerNorm(dim),
-        #                 Attention(dim, heads=heads, dim_head=dim_head),
-        #                 nn.LayerNorm(dim),
-        #                 FeedForward(dim),
-        #             ]
-        #         )
-        #     )
-        # if zero_init:
-        #     for _, attn, _, ff in self.layers:
-        #         nn.init.zeros_(attn.to_out.weight)
-        #         nn.init.zeros_(attn.to_out.bias)
-        #         for m in ff.net:
-        #             if isinstance(m, nn.Linear):
-        #                 nn.init.zeros_(m.weight)
-        #                 nn.init.zeros_(m.bias)
-
         layer = nn.TransformerEncoderLayer(
             dim, nhead=heads, dim_feedforward=dim * 4, dropout=dropout, batch_first=True, norm_first=norm_first
         )
@@ -777,10 +740,6 @@ class Transformer(nn.Module):
         Returns:
             [B, N, D]
         """
-        # for norm1, attn, norm2, ff in self.layers:
-        #     x = attn(norm1(x), mask=mask) + x
-        #     x = ff(norm2(x)) + x
-        # assert mask.dtype is torch.bool
         x = self.layers(x, mask=~mask)
         return x
 
@@ -918,24 +877,6 @@ class JointsAttentionCausal(nn.Module):
 
         if self.training:
             assert out_gt is not None and out_gt.shape == (B, N, self.out_dim)
-            # # Avoid overfitting
-            # if self.out_type == "joints":
-            #     out_gt += torch.randn_like(out_gt) * 5e-2
-            # elif self.out_type == "pose":
-            #     from pytorch3d.transforms import euler_angles_to_matrix
-
-            #     rand_rot = (torch.randn_like(out_gt[..., :3]) * 30) / 180 * torch.pi
-            #     rand_rot = euler_angles_to_matrix(rand_rot, "XYZ")
-            #     if out_gt.shape[-1] == 6:
-            #         from util.utils import matrix_to_ortho6d, ortho6d_to_matrix
-
-            #         out_gt = matrix_to_ortho6d(rand_rot @ ortho6d_to_matrix(out_gt))
-            #     elif out_gt.shape[-1] == 4:
-            #         from util.utils import matrix_to_quat, quat_to_matrix
-
-            #         out_gt = matrix_to_quat(rand_rot @ quat_to_matrix(out_gt))
-            #     else:
-            #         raise NotImplementedError
             out = self._forward(feat, out_gt)
         else:
             out = torch.zeros((B, N, self.out_dim), dtype=feat.dtype, device=feat.device)

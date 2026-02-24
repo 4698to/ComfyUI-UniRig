@@ -128,9 +128,10 @@ TOKENIZER_CONFIG = {
         "hand": 1,
     },
     "order_config": {
+        # Keys select which SKELETONS entries to use (values unused)
         "skeleton_path": {
-            "vroid": "configs/skeleton/vroid.yaml",
-            "mixamo": "configs/skeleton/mixamo.yaml",
+            "vroid": "",
+            "mixamo": "",
         },
     },
 }

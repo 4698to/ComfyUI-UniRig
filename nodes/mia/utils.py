@@ -261,14 +261,9 @@ def fix_random(seed=0):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    # torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    # torch.use_deterministic_algorithms(True)
-    # os.environ["PYTHONHASHSEED"] = "0"
-    # os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-    # os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
 
 def str2bool(v: str) -> bool:
@@ -656,36 +651,6 @@ def dualquat_to_quat_transl(dq: torch.Tensor, concat=False, transl_first=False):
     return quat_trans
 
 
-def matrix_to_ortho6d(matrix: torch.Tensor):
-    """
-    Args:
-        rotation matrix: (..., 3, 3)
-    Returns:
-        (..., 6) ortho6d
-    """
-    sh = matrix.shape
-    return matrix[..., :-1].transpose(-1, -2).reshape(*sh[:-2], 6)
-
-
-def ortho6d_to_matrix(ortho6d: torch.Tensor):
-    """On the Continuity of Rotation Representations in Neural Networks
-    https://github.com/papagina/RotationContinuity/blob/master/sanity_test/code/tools.py
-    Args:
-        ortho6d: (..., 6)
-    Returns:
-        (..., 3, 3) rotation matrix
-    """
-    x_raw = ortho6d[..., 0:3]
-    y_raw = ortho6d[..., 3:6]
-
-    x = F.normalize(x_raw, dim=-1)
-    z = torch.cross(x, y_raw, dim=-1)
-    z = F.normalize(z, dim=-1)
-    y = torch.cross(z, x, dim=-1)
-
-    return torch.stack((x, y, z), dim=-1)
-
-
 def get_rotation_center(matrix: Tensor_or_Array) -> Tensor_or_Array:
     """https://math.stackexchange.com/questions/4397763/3d-rotation-matrix-around-a-point-not-origin/4397766
     Args:
@@ -969,29 +934,6 @@ def get_geometry_guided_sampling_centers(mesh: trimesh.Trimesh, num_pts: int, ra
     verts = np.array(mesh.vertices)
     idx = fps(torch.from_numpy(verts), ratio=num_fps / verts.shape[0]).numpy()
 
-    # mesh_ = mesh.copy()
-    # # trimesh.smoothing.filter_humphrey(mesh_, iterations=10, beta=1.0)
-    # # diff = np.linalg.norm(mesh_.vertices - mesh.vertices, axis=-1)
-    # diff = mesh_.simplify_quadric_decimation(face_count=mesh_.faces.shape[0] / 10).nearest.vertex(mesh_.vertices)[0]
-    # import matplotlib; cmap = matplotlib.colormaps.get_cmap("plasma")  # fmt: skip
-    # mesh_ = trimesh.Trimesh(vertices=mesh_.vertices, faces=mesh_.faces, vertex_colors=cmap(diff / diff.max())[:, :3])
-    # mesh_.export("sample.obj")
-
-    # area_ratio = []
-    # for i_v in idx:
-    #     box = trimesh.creation.box(extents=(radius, radius, radius))
-    #     box.vertices += verts[i_v]
-    #     mesh_sliced = mesh.slice_plane(box.facets_origin, -box.facets_normal)
-    #     trimesh.repair.fill_holes(mesh_sliced)
-    #     mesh_area = mesh_sliced.facets_area.sum()
-    #     # oriented_box = mesh_sliced.bounding_cylinder
-    #     oriented_box = mesh_sliced.bounding_box_oriented
-    #     box_area = oriented_box.facets_area.sum()
-    #     area_ratio.append(mesh_area / box_area)
-    #     if area_ratio[-1] > 0.1:
-    #         mesh_ = trimesh.util.concatenate([mesh_, oriented_box])
-    # mesh_.export("sample.obj")
-
     dist = distance_matrix(verts[idx], verts)
     solver = pp3d.MeshHeatMethodDistanceSolver(verts, mesh.faces)
     dist_geo = np.empty((idx.shape[0], verts.shape[0]))
@@ -1051,10 +993,6 @@ def sample_mesh(
             pts_extra = _sample_mesh(mesh, num_points - pts.shape[0], return_normal=get_normals)
             pts = np.concatenate([pts, pts_extra], axis=0)
 
-    # assert pts.shape[0] == num_points
-    # colors = np.ones_like(pts)
-    # colors[:num_points_main, :] = 0
-    # trimesh.Trimesh(pts, vertex_colors=colors).export("sample.ply")
     return pts
 
 
@@ -1072,7 +1010,6 @@ def load_gs(path: str, compatible=True):
         ),
         axis=1,
     )
-    # print("Number of points at loading : ", xyz.shape[0])
 
     opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis]
 
