@@ -7,9 +7,17 @@ import subprocess
 import tempfile
 import numpy as np
 import trimesh
-import igl
 from pathlib import Path
 from typing import Tuple, Optional
+import logging
+
+log = logging.getLogger("unirig")
+
+try:
+    import igl
+except ImportError:
+    log.warning("libigl not found, mesh IO will not be available")
+    igl = None
 
 # ComfyUI folder paths
 try:
@@ -26,9 +34,6 @@ try:
     from .base import LIB_DIR
 except ImportError:
     from base import LIB_DIR
-import logging
-
-log = logging.getLogger("unirig")
 
 def load_fbx_with_blender(file_path: str) -> Tuple[Optional[trimesh.Trimesh], str]:
     """
@@ -173,6 +178,11 @@ def load_mesh_file(file_path: str) -> Tuple[Optional[trimesh.Trimesh], str]:
 
     except Exception as e:
         log.info(f"Trimesh failed: {str(e)}, trying libigl fallback...")
+        if igl is None:
+            return None, (
+                f"Error loading mesh: {str(e)}; "
+                "Fallback unavailable: libigl is not installed or failed to import."
+            )
         # Fallback to libigl
         try:
             v, f = igl.read_triangle_mesh(file_path)
