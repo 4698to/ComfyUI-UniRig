@@ -52,6 +52,14 @@ class MIAAutoRig:
                     "default": True,
                     "tooltip": "Transform output to T-pose rest position for animation compatibility."
                 }),
+                "normalize_ground": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "Align mesh feet to ground (Y=0) for stable placement."
+                }),
+                "add_root_bone": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "Add a synthetic Root bone at origin and parent top-level bones to it."
+                }),
             }
         }
 
@@ -68,6 +76,8 @@ class MIAAutoRig:
         no_fingers=True,
         use_normal=False,
         reset_to_rest=True,
+        normalize_ground=True,
+        add_root_bone=True,
     ):
         """
         Complete rigging pipeline using Make-It-Animatable.
@@ -88,7 +98,10 @@ class MIAAutoRig:
             log.debug("  Material: %s", type(trimesh.visual.material).__name__)
 
         log.info("Starting Make-It-Animatable rigging pipeline...")
-        log.info("Options: no_fingers=%s, use_normal=%s, reset_to_rest=%s", no_fingers, use_normal, reset_to_rest)
+        log.info(
+            "Options: no_fingers=%s, use_normal=%s, reset_to_rest=%s, normalize_ground=%s, add_root_bone=%s",
+            no_fingers, use_normal, reset_to_rest, normalize_ground, add_root_bone
+        )
 
         # model is a config dict from MIALoadModel - extract settings
         dtype = model.get("dtype", "fp32")
@@ -117,6 +130,8 @@ class MIAAutoRig:
             no_fingers=no_fingers,
             use_normal=use_normal,
             reset_to_rest=reset_to_rest,
+            normalize_ground=normalize_ground,
+            add_root_bone=add_root_bone,
         )
 
         total_time = time.time() - total_start

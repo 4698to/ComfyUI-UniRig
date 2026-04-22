@@ -16,6 +16,20 @@ import logging
 import comfy.model_management
 
 log = logging.getLogger("unirig")
+
+
+def _emit_visible_log(message: str, *args) -> None:
+    """
+    Emit log messages both through logger and stdout so worker console always shows them.
+    """
+    log.info(message, *args)
+    try:
+        text = message % args if args else message
+    except Exception:
+        text = f"{message} {args}"
+    print(f"[MIA] {text}")
+
+
 # Type hints only - not imported at runtime
 if TYPE_CHECKING:
     import numpy as np
@@ -232,6 +246,8 @@ def run_mia_inference(
     no_fingers: bool = True,
     use_normal: bool = False,
     reset_to_rest: bool = True,
+    normalize_ground: bool = True,
+    add_root_bone: bool = True,
 ) -> str:
     """
     Run Make-It-Animatable inference on a mesh.
@@ -243,6 +259,8 @@ def run_mia_inference(
         no_fingers: If True, merge finger weights to hand (for models without separate fingers).
         use_normal: If True, use normals for better weights when limbs are close.
         reset_to_rest: If True, transform output to T-pose rest position.
+        normalize_ground: If True, align lowest vertex to ground plane (Y=0).
+        add_root_bone: If True, add a synthetic Root bone at origin before export.
 
     Returns:
         Path to output FBX file.
@@ -269,8 +287,18 @@ def run_mia_inference(
     dtype = models["dtype"]
 
     log.info("Starting MIA inference (device=%s, dtype=%s)...", device, dtype)
-    log.info("Options: no_fingers=%s, use_normal=%s, reset_to_rest=%s", no_fingers, use_normal, reset_to_rest)
+    _emit_visible_log(
+        "Options: no_fingers=%s, use_normal=%s, reset_to_rest=%s, normalize_ground=%s, add_root_bone=%s",
+        no_fingers, use_normal, reset_to_rest, normalize_ground, add_root_bone
+    )
     log.info("Input mesh: %d vertices, %d faces", len(mesh.vertices), len(mesh.faces))
+    # Snapshot original input scale before any pipeline stage may mutate mesh in-place.
+    original_bounds = mesh.bounds.copy()
+    original_input_height = float(max(
+        original_bounds[1][1] - original_bounds[0][1],
+        original_bounds[1][2] - original_bounds[0][2],
+    ))
+    _emit_visible_log("Original input height snapshot: %.6f", original_input_height)
 
     # Prepare input
     log.info("Step 1/4: Preparing input (N=%d)...", N)
@@ -342,14 +370,120 @@ def run_mia_inference(
         "bones_idx_dict": BONES_IDX_DICT,
         "parent_indices": KINEMATIC_TREE.parent_indices,
         "pose_ignore_list": [],
+        "input_mesh_height": original_input_height,
     }
 
     # Export to FBX using MIA's Blender integration
     log.info("Exporting to FBX...")
-    _export_mia_fbx(output_data, output_path, no_fingers, reset_to_rest)
+    _export_mia_fbx(
+        output_data,
+        output_path,
+        no_fingers,
+        reset_to_rest,
+        normalize_ground,
+        add_root_bone,
+    )
 
     log.info("Inference complete: %s", output_path)
     return output_path
+
+
+def _normalize_mia_export_space(
+    input_meshes: list,
+    joints: "np.ndarray",
+    joints_tail: Optional["np.ndarray"],
+    normalize_ground: bool,
+):
+    """
+    Normalize MIA export space to keep feet on ground.
+    """
+    import numpy as np  # Lazy import
+
+    mesh_min_y = None
+    mesh_max_y = None
+    for mesh_obj in input_meshes:
+        verts = np.array([v.co for v in mesh_obj.data.vertices], dtype=np.float32)
+        if len(verts) == 0:
+            continue
+        cur_min_y = float(verts[:, 1].min())
+        cur_max_y = float(verts[:, 1].max())
+        mesh_min_y = cur_min_y if mesh_min_y is None else min(mesh_min_y, cur_min_y)
+        mesh_max_y = cur_max_y if mesh_max_y is None else max(mesh_max_y, cur_max_y)
+
+    total_y_offset = 0.0
+    ground_offset = 0.0
+
+    if normalize_ground:
+        if mesh_min_y is not None:
+            ground_offset = -mesh_min_y
+            total_y_offset += ground_offset
+
+    if abs(total_y_offset) > 1e-8:
+        for mesh_obj in input_meshes:
+            mesh_data = mesh_obj.data
+            for v in mesh_data.vertices:
+                v.co[1] += total_y_offset
+            mesh_data.update()
+        joints[:, 1] += total_y_offset
+        if joints_tail is not None:
+            joints_tail[:, 1] += total_y_offset
+
+    return joints, joints_tail
+
+
+def _match_input_scale(
+    input_meshes: list,
+    joints: "np.ndarray",
+    joints_tail: Optional["np.ndarray"],
+    target_mesh_height: float,
+):
+    """
+    Uniformly scale mesh and joints to match the input mesh height (Y axis).
+    """
+    import numpy as np  # Lazy import
+
+    if target_mesh_height <= 1e-8:
+        return joints, joints_tail
+
+    cur_min = None
+    cur_max = None
+    for mesh_obj in input_meshes:
+        verts = np.array([v.co for v in mesh_obj.data.vertices], dtype=np.float32)
+        if len(verts) == 0:
+            continue
+        vmin = verts.min(axis=0)
+        vmax = verts.max(axis=0)
+        cur_min = vmin if cur_min is None else np.minimum(cur_min, vmin)
+        cur_max = vmax if cur_max is None else np.maximum(cur_max, vmax)
+
+    if cur_min is None or cur_max is None:
+        return joints, joints_tail
+
+    # In this stage data is usually Y-up, but keeping max(Y, Z) is safer
+    # for assets that may still carry a different up-axis convention.
+    current_mesh_height = float(max(cur_max[1] - cur_min[1], cur_max[2] - cur_min[2]))
+    if current_mesh_height <= 1e-8:
+        return joints, joints_tail
+
+    scale_factor = target_mesh_height / current_mesh_height
+    if abs(scale_factor - 1.0) < 1e-6:
+        return joints, joints_tail
+
+    for mesh_obj in input_meshes:
+        mesh_data = mesh_obj.data
+        for v in mesh_data.vertices:
+            v.co *= scale_factor
+        mesh_data.update()
+
+    joints *= scale_factor
+    if joints_tail is not None:
+        joints_tail *= scale_factor
+
+    _emit_visible_log(
+        "Applied MIA output scale correction: current_height=%.6f, target_height=%.6f, factor=%.6f",
+        current_mesh_height, target_mesh_height, scale_factor
+    )
+    return joints, joints_tail
 
 
 def _export_mia_fbx_direct(
@@ -357,6 +491,8 @@ def _export_mia_fbx_direct(
     output_path: str,
     remove_fingers: bool,
     reset_to_rest: bool,
+    normalize_ground: bool,
+    add_root_bone: bool,
     template_path: Path,
 ) -> None:
     """
@@ -367,12 +503,17 @@ def _export_mia_fbx_direct(
     import bpy  # Lazy import - only imported here AFTER torch_cluster loaded
     from mathutils import Vector, Matrix
 
+    armature_name = "Armature"
+    if add_root_bone:
+        armature_name = "Armature_Root"
+
     mesh = data["mesh"]
     joints = data["joints"]
     joints_tail = data.get("joints_tail")
     bw = data["bw"]
     pose = data.get("pose")
     bones_idx_dict = dict(data["bones_idx_dict"])
+    input_mesh_height = float(data.get("input_mesh_height", 0.0))
 
     log.debug("Mesh to export: %d verts, %d faces, visual=%s",
               len(mesh.vertices), len(mesh.faces),
@@ -414,6 +555,7 @@ def _export_mia_fbx_direct(
             raise RuntimeError("No armature found in template!")
 
         log.info("Loaded template armature: %s", armature.name)
+        armature.name = armature_name
 
         # Capture template bone orientations (including z_axis for align_roll)
         bpy.context.view_layer.objects.active = armature
@@ -479,12 +621,21 @@ def _export_mia_fbx_direct(
         # Save armature's world matrix and get scaling factor
         matrix_world = armature.matrix_world.copy()
         scaling = matrix_world.to_scale()[0]
+        effective_scaling = 1.0
+        log.debug("Effective scaling: %s", effective_scaling)
 
         # Reset armature to identity
         armature.matrix_world.identity()
         bpy.context.view_layer.update()
 
-        # Transform mesh vertices: Y-Z swap and divide by scaling
+        # Bake object transforms first, so further vertex edits don't drift object origins.
+        for mesh_obj in input_meshes:
+            bpy.context.view_layer.objects.active = mesh_obj
+            mesh_obj.select_set(True)
+            bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+            mesh_obj.select_set(False)
+
+        # Transform mesh vertices: Y-Z swap and divide by scaling compensation.
         for mesh_obj in input_meshes:
             mesh_data = mesh_obj.data
             verts = np.array([v.co for v in mesh_data.vertices])
@@ -492,14 +643,33 @@ def _export_mia_fbx_direct(
             new_z = -verts[:, 1].copy()
             verts[:, 1] = new_y
             verts[:, 2] = new_z
-            verts = verts / scaling
+            verts = verts / effective_scaling
             for i, v in enumerate(mesh_data.vertices):
                 v.co = verts[i]
             mesh_data.update()
 
-        # Set bones with joints/scaling
-        joints_normalized = joints / scaling
-        joints_tail_normalized = joints_tail / scaling if joints_tail is not None else None
+        # Set bones with the same scaling compensation used for mesh.
+        joints_normalized = joints / effective_scaling
+        joints_tail_normalized = joints_tail / effective_scaling if joints_tail is not None else None
+        joints_normalized, joints_tail_normalized = _normalize_mia_export_space(
+            input_meshes=input_meshes,
+            joints=joints_normalized,
+            joints_tail=joints_tail_normalized,
+            normalize_ground=normalize_ground,
+        )
+        joints_normalized, joints_tail_normalized = _match_input_scale(
+            input_meshes=input_meshes,
+            joints=joints_normalized,
+            joints_tail=joints_tail_normalized,
+            target_mesh_height=input_mesh_height,
+        )
+        # Re-apply placement normalization after scaling.
+        joints_normalized, joints_tail_normalized = _normalize_mia_export_space(
+            input_meshes=input_meshes,
+            joints=joints_normalized,
+            joints_tail=joints_tail_normalized,
+            normalize_ground=normalize_ground,
+        )
 
         bpy.context.view_layer.objects.active = armature
         bpy.ops.object.mode_set(mode='EDIT')
@@ -522,6 +692,32 @@ def _export_mia_fbx_direct(
             bone = armature.data.edit_bones.get(bone_name)
             if bone:
                 armature.data.edit_bones.remove(bone)
+
+        # Add a synthetic Root bone and parent root-level bones to it.
+        # if add_root_bone:
+        #     edit_bones = armature.data.edit_bones
+        #     root_name = "Root"
+        #     if edit_bones.get(root_name) is None:
+        #         root_level_bones = [b for b in edit_bones if b.parent is None]
+        #         if root_level_bones:
+        #             hips_bone = edit_bones.get("mixamorig:Hips")
+        #             main_root = hips_bone if hips_bone is not None else root_level_bones[0]
+        #             root_bone = edit_bones.new(root_name)
+        #             root_head = main_root.head.copy()
+        #             root_head.x = 0.0
+        #             root_head.y = 0.0
+        #             root_head.z = 0.0
+        #             root_tail = root_head.copy()
+        #             root_tail.y += 0.05
+        #             root_bone.head = root_head
+        #             root_bone.tail = root_tail
+        #             root_bone.use_connect = False
+
+        #             for bone in root_level_bones:
+        #                 if bone.name != root_name:
+        #                     bone.parent = root_bone
+        #                     bone.use_connect = False
+        #             log.info("Added synthetic root bone '%s' with %d children", root_name, len(root_level_bones))
 
         bpy.ops.object.mode_set(mode='OBJECT')
 
@@ -546,12 +742,13 @@ def _export_mia_fbx_direct(
 
         # Add armature modifier
         for mesh_obj in input_meshes:
-            mod = mesh_obj.modifiers.new(name="Armature", type='ARMATURE')
+            mod = mesh_obj.modifiers.new(name=armature_name, type='ARMATURE')
             mod.object = armature
             mod.use_vertex_groups = True
 
-        # Restore armature matrix
-        armature.matrix_world = matrix_world
+        # Restore armature matrix with unit scale to keep exported size consistent.
+        loc, rot, _ = matrix_world.decompose()
+        armature.matrix_world = Matrix.LocRotScale(loc, rot, (1.0, 1.0, 1.0))
         bpy.context.view_layer.update()
 
         # Apply pose-to-rest if needed (imports helper functions from mia_export)
@@ -588,6 +785,25 @@ def _export_mia_fbx_direct(
 
         # Export FBX
         bpy.context.view_layer.update()
+        # Force deterministic unit behavior to avoid 100x scale drift across DCC tools.
+        scene_units = bpy.context.scene.unit_settings
+        scene_units.system = 'METRIC'
+        scene_units.scale_length = 0.01 #1.0
+        _emit_visible_log(
+            "FBX pre-export units: system=%s scale_length=%.6f armature_scale=(%.6f, %.6f, %.6f)",
+            scene_units.system,
+            scene_units.scale_length,
+            armature.scale.x,
+            armature.scale.y,
+            armature.scale.z,
+        )
+        scene_blend_path = output_path.rsplit('.', 1)[0] + '.blend'
+        bpy.ops.wm.save_as_mainfile(
+            filepath=scene_blend_path,
+            check_existing=False,
+            copy=True,
+        )
+        _emit_visible_log("Saved debug Blender scene: %s", scene_blend_path)
         bpy.ops.export_scene.fbx(
             filepath=output_path,
             use_selection=False,
@@ -596,6 +812,11 @@ def _export_mia_fbx_direct(
             bake_anim=False,
             path_mode='COPY',
             embed_textures=True,
+            global_scale=1.0,
+            apply_unit_scale=True,
+            apply_scale_options='FBX_SCALE_UNITS',
+            # axis_forward='-Z',
+            # axis_up='Y',
         )
         log.info("Exported to: %s", output_path)
 
@@ -730,7 +951,7 @@ def _apply_pose_to_rest_inline(armature_obj, pose, bones_idx_dict, parent_indice
 
     # Re-add armature modifier
     for mesh_obj in input_meshes:
-        mod = mesh_obj.modifiers.new(name="Armature", type='ARMATURE')
+        mod = mesh_obj.modifiers.new(name="Armature_Root", type='ARMATURE')
         mod.object = armature_obj
         mod.use_vertex_groups = True
 
@@ -748,6 +969,8 @@ def _export_mia_fbx(
     output_path: str,
     remove_fingers: bool,
     reset_to_rest: bool,
+    normalize_ground: bool,
+    add_root_bone: bool,
 ) -> None:
     """
     Export MIA results to FBX using bpy directly.
@@ -768,7 +991,15 @@ def _export_mia_fbx(
         )
 
     log.info("Exporting FBX via bpy...")
-    _export_mia_fbx_direct(data, output_path, remove_fingers, reset_to_rest, template_path)
+    _export_mia_fbx_direct(
+        data,
+        output_path,
+        remove_fingers,
+        reset_to_rest,
+        normalize_ground,
+        add_root_bone,
+        template_path,
+    )
 
     if not os.path.exists(output_path):
         raise RuntimeError(f"Export completed but output file not created: {output_path}")

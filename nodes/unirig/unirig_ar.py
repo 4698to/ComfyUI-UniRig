@@ -85,7 +85,6 @@ class UniRigAR(ModelSpec):
         config_dict['vocab_size'] = _d['vocab_size']
         log.info("Loading transformer model from local OPT-350m config")
         llm_config = OPTConfig(**config_dict)
-        llm_config.torch_dtype = torch.float32
         llm_config.pre_norm = True
         self.transformer = AutoModelForCausalLM.from_config(config=llm_config)
         log.info("[OK] Transformer loaded")
