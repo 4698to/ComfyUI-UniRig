@@ -371,6 +371,7 @@ def run_mia_inference(
         "parent_indices": KINEMATIC_TREE.parent_indices,
         "pose_ignore_list": [],
         "input_mesh_height": original_input_height,
+        "source_mesh_path": str(mesh.metadata.get("file_path", "")) if hasattr(mesh, "metadata") else "",
     }
 
     # Export to FBX using MIA's Blender integration
@@ -514,11 +515,246 @@ def _export_mia_fbx_direct(
     pose = data.get("pose")
     bones_idx_dict = dict(data["bones_idx_dict"])
     input_mesh_height = float(data.get("input_mesh_height", 0.0))
+    source_mesh_path = str(data.get("source_mesh_path") or "")
 
     log.debug("Mesh to export: %d verts, %d faces, visual=%s",
               len(mesh.vertices), len(mesh.faces),
               type(mesh.visual).__name__ if hasattr(mesh, 'visual') else 'none')
     parent_indices = data.get("parent_indices")
+
+    def _save_blender_uv_ppm_debug(mesh_obj, out_path, size=1024):
+        """Save Blender loop-UV wireframe as PPM for debugging."""
+        mesh_data = mesh_obj.data
+        if not mesh_data.uv_layers:
+            _emit_visible_log("Skip Blender UV debug (no uv layers): %s", out_path)
+            return
+
+        uv_layer = mesh_data.uv_layers.active or mesh_data.uv_layers[0]
+        img = np.full((size, size, 3), 255, dtype=np.uint8)
+
+        def draw_line(x0, y0, x1, y1):
+            dx = abs(x1 - x0)
+            sx = 1 if x0 < x1 else -1
+            dy = -abs(y1 - y0)
+            sy = 1 if y0 < y1 else -1
+            err = dx + dy
+            while True:
+                if 0 <= x0 < size and 0 <= y0 < size:
+                    img[y0, x0] = (0, 0, 0)
+                if x0 == x1 and y0 == y1:
+                    break
+                e2 = 2 * err
+                if e2 >= dy:
+                    err += dy
+                    x0 += sx
+                if e2 <= dx:
+                    err += dx
+                    y0 += sy
+
+        for poly in mesh_data.polygons:
+            loops = poly.loop_indices
+            n = len(loops)
+            for i in range(n):
+                la = loops[i]
+                lb = loops[(i + 1) % n]
+                uva = uv_layer.data[la].uv
+                uvb = uv_layer.data[lb].uv
+                x0 = int(max(0, min(size - 1, round(float(uva.x) * (size - 1)))))
+                y0 = int(max(0, min(size - 1, round((1.0 - float(uva.y)) * (size - 1)))))
+                x1 = int(max(0, min(size - 1, round(float(uvb.x) * (size - 1)))))
+                y1 = int(max(0, min(size - 1, round((1.0 - float(uvb.y)) * (size - 1)))))
+                draw_line(x0, y0, x1, y1)
+
+        with open(out_path, "wb") as f:
+            f.write(f"P6\n{size} {size}\n255\n".encode("ascii"))
+            f.write(img.tobytes())
+        _emit_visible_log("Saved Blender UV debug: %s", out_path)
+
+    def _save_blender_uv_ppm_debug_obj_style(mesh_obj, out_path, size=1024):
+        """
+        Save Blender UV using OBJ-style vt/face-vt algorithm.
+        This mirrors _save_obj_uv_ppm_debug semantics for A/B comparison.
+        """
+        mesh_data = mesh_obj.data
+        if not mesh_data.uv_layers:
+            _emit_visible_log("Skip Blender OBJ-style UV debug (no uv layers): %s", out_path)
+            return
+
+        uv_layer = mesh_data.uv_layers.active or mesh_data.uv_layers[0]
+        vt_list = []
+        face_vt_indices = []
+        vt_map = {}
+
+        for poly in mesh_data.polygons:
+            poly_vt = []
+            for li in poly.loop_indices:
+                uv = uv_layer.data[li].uv
+                # Quantize key to avoid tiny float noise producing duplicate vt entries.
+                key = (round(float(uv.x), 7), round(float(uv.y), 7))
+                if key not in vt_map:
+                    vt_map[key] = len(vt_list)
+                    vt_list.append(key)
+                poly_vt.append(vt_map[key])
+            if len(poly_vt) >= 2:
+                face_vt_indices.append(poly_vt)
+
+        if not vt_list or not face_vt_indices:
+            _emit_visible_log("Skip Blender OBJ-style UV debug (empty vt/f-vt): %s", out_path)
+            return
+
+        uv = np.asarray(vt_list, dtype=np.float64)
+        img = np.full((size, size, 3), 255, dtype=np.uint8)
+
+        def draw_line(x0, y0, x1, y1):
+            dx = abs(x1 - x0)
+            sx = 1 if x0 < x1 else -1
+            dy = -abs(y1 - y0)
+            sy = 1 if y0 < y1 else -1
+            err = dx + dy
+            while True:
+                if 0 <= x0 < size and 0 <= y0 < size:
+                    img[y0, x0] = (0, 0, 0)
+                if x0 == x1 and y0 == y1:
+                    break
+                e2 = 2 * err
+                if e2 >= dy:
+                    err += dy
+                    x0 += sx
+                if e2 <= dx:
+                    err += dx
+                    y0 += sy
+
+        for poly in face_vt_indices:
+            n = len(poly)
+            for i in range(n):
+                a = poly[i]
+                b = poly[(i + 1) % n]
+                u0, v0 = float(uv[a, 0]), float(uv[a, 1])
+                u1, v1 = float(uv[b, 0]), float(uv[b, 1])
+                x0 = int(max(0, min(size - 1, round(u0 * (size - 1)))))
+                y0 = int(max(0, min(size - 1, round((1.0 - v0) * (size - 1)))))
+                x1 = int(max(0, min(size - 1, round(u1 * (size - 1)))))
+                y1 = int(max(0, min(size - 1, round((1.0 - v1) * (size - 1)))))
+                draw_line(x0, y0, x1, y1)
+
+        with open(out_path, "wb") as f:
+            f.write(f"P6\n{size} {size}\n255\n".encode("ascii"))
+            f.write(img.tobytes())
+        _emit_visible_log("Saved Blender OBJ-style UV debug: %s", out_path)
+
+    def _load_obj_face_corner_uvs(obj_path):
+        """
+        Load OBJ vt values and expand to face-corner uv list in file face order.
+        Returns list[(u, v)] aligned to concatenated polygon loop order.
+        """
+        vt_list = []
+        corner_uvs = []
+        with open(obj_path, "r", encoding="utf-8", errors="ignore") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("vt "):
+                    parts = line.split()
+                    if len(parts) >= 3:
+                        vt_list.append((float(parts[1]), float(parts[2])))
+                elif line.startswith("f "):
+                    tokens = line.split()[1:]
+                    poly = []
+                    for t in tokens:
+                        subs = t.split("/")
+                        if len(subs) >= 2 and subs[1] != "":
+                            vt_idx = int(subs[1])
+                            if vt_idx < 0:
+                                vt_idx = len(vt_list) + vt_idx + 1
+                            vt_zero = vt_idx - 1
+                            if 0 <= vt_zero < len(vt_list):
+                                poly.append(vt_list[vt_zero])
+                    if len(poly) >= 3:
+                        corner_uvs.extend(poly)
+        return corner_uvs
+
+    def _load_mesh_face_corner_uvs_from_memory(src_mesh):
+        """
+        Build face-corner UV list from in-memory trimesh using mesh.faces -> mesh.visual.uv.
+        Returns None when memory UVs are unavailable.
+        """
+        if (
+            src_mesh is None
+            or not hasattr(src_mesh, "faces")
+            or src_mesh.faces is None
+            or len(src_mesh.faces) == 0
+            or not hasattr(src_mesh, "visual")
+            or src_mesh.visual is None
+            or not hasattr(src_mesh.visual, "uv")
+            or src_mesh.visual.uv is None
+            or len(src_mesh.visual.uv) == 0
+        ):
+            return None
+
+        uv = np.asarray(src_mesh.visual.uv, dtype=np.float64)
+        corner_uvs = []
+        for face in np.asarray(src_mesh.faces):
+            poly = []
+            for vid in face:
+                vid = int(vid)
+                if vid < 0 or vid >= len(uv):
+                    return None
+                poly.append((float(uv[vid, 0]), float(uv[vid, 1])))
+            if len(poly) >= 3:
+                corner_uvs.extend(poly)
+        return corner_uvs if corner_uvs else None
+
+    def _copy_uvs_to_blender_meshes(meshes, src_mesh, obj_path):
+        """
+        Copy UVs onto Blender meshes (loop UV), trying in-memory mesh first,
+        then falling back to source OBJ vt/f mapping.
+        """
+        try:
+            total_loops = sum(len(m.data.loops) for m in meshes)
+            corner_uvs = None #_load_mesh_face_corner_uvs_from_memory(src_mesh)
+            source_tag = "memory-mesh"
+            if not corner_uvs:
+                if not obj_path or not os.path.isfile(obj_path) or not obj_path.lower().endswith(".obj"):
+                    _emit_visible_log("Skip UV copy: memory UV unavailable and source obj invalid")
+                    return False
+                corner_uvs = _load_obj_face_corner_uvs(obj_path)
+                source_tag = "source-obj"
+
+            if not corner_uvs:
+                _emit_visible_log("Skip UV copy: no usable corner UVs from memory/OBJ")
+                return False
+
+            if total_loops != len(corner_uvs):
+                _emit_visible_log(
+                    "Skip UV copy (%s): loop mismatch (blender=%d, source=%d)",
+                    source_tag,
+                    total_loops,
+                    len(corner_uvs),
+                )
+                return False
+
+            cursor = 0
+            for mesh_obj in meshes:
+                mesh_data = mesh_obj.data
+                if not mesh_data.uv_layers:
+                    mesh_data.uv_layers.new(name="UVMap")
+                uv_layer = mesh_data.uv_layers.active or mesh_data.uv_layers[0]
+                loop_count = len(mesh_data.loops)
+                seg = corner_uvs[cursor:cursor + loop_count]
+                if len(seg) != loop_count:
+                    _emit_visible_log("Skip OBJ->Blender UV copy: segment length mismatch for %s", mesh_obj.name)
+                    return False
+                for i in range(loop_count):
+                    uv_layer.data[i].uv = seg[i]
+                mesh_data.update()
+                cursor += loop_count
+
+            _emit_visible_log("Copied UVs to Blender meshes successfully (source=%s).", source_tag)
+            return True
+        except Exception as e:
+            _emit_visible_log("Failed UV copy to Blender meshes: %s", e)
+            return False
 
     # Restore original visual (textures/materials) before export
     original_visual = data.get("original_visual")
@@ -527,6 +763,16 @@ def _export_mia_fbx_direct(
         log.debug("Restored original visual: %s", type(original_visual).__name__)
     else:
         log.warning("No original_visual to restore")
+
+    # Export-chain UV sanity check using OBJ-native vt/f indexing.
+    # if source_mesh_path and source_mesh_path.lower().endswith(".obj") and os.path.isfile(source_mesh_path):
+    #     try:
+    #         from .mesh_io import _save_obj_uv_ppm_debug
+    #         uv_ppm_path = output_path.rsplit(".", 1)[0] + "_uv_export_chain_obj_native.ppm"
+    #         _save_obj_uv_ppm_debug(source_mesh_path, uv_ppm_path)
+    #         _emit_visible_log("Saved export-chain OBJ-native UV debug: %s", uv_ppm_path)
+    #     except Exception as e:
+    #         _emit_visible_log("Failed export-chain OBJ-native UV debug: %s", e)
 
     # Export processed mesh to temp GLB for import into Blender
     temp_mesh_file = tempfile.NamedTemporaryFile(suffix=".glb", delete=False)
@@ -583,8 +829,21 @@ def _export_mia_fbx_direct(
 
         if not input_meshes:
             raise RuntimeError("No mesh found in input!")
+        
+        _emit_visible_log( f"Loaded -> {mesh_path}" )
 
         log.debug("Loaded %d mesh(es) from GLB", len(input_meshes))
+        _copy_uvs_to_blender_meshes(input_meshes, mesh, source_mesh_path)
+        # uv_debug_base = output_path.rsplit(".", 1)[0]
+        # for idx, mesh_obj in enumerate(input_meshes):
+        #     _save_blender_uv_ppm_debug(
+        #         mesh_obj,
+        #         f"{uv_debug_base}_uv_after_blender_import_{idx:02d}.ppm",
+        #     )
+        #     _save_blender_uv_ppm_debug_obj_style(
+        #         mesh_obj,
+        #         f"{uv_debug_base}_uv_after_blender_import_obj_style_{idx:02d}.ppm",
+        #     )
 
         # Remove template meshes
         for obj in template_objs:

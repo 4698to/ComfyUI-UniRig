@@ -35,6 +35,250 @@ try:
 except ImportError:
     from base import LIB_DIR
 
+def _emit_visible_log(message: str, *args) -> None:
+    """
+    Emit log messages both through logger and stdout so worker console always shows them.
+    """
+    log.info(message, *args)
+    try:
+        text = message % args if args else message
+    except Exception:
+        text = f"{message} {args}"
+    print(f"[MESH_IO] {text}")
+
+def _save_uv_ppm_debug_varying(mesh: trimesh.Trimesh, out_path: str, size: int = 1024) -> None:
+    """Save UV wireframe with support for face-varying UVs."""
+    try:
+        if not hasattr(mesh, "visual") or mesh.visual is None:
+            return
+        
+        faces = np.asarray(mesh.faces)
+        uv = np.asarray(mesh.visual.uv, dtype=np.float64)
+        
+        n_faces = len(faces)
+        n_verts = len(mesh.vertices)
+        n_uvs = len(uv)
+        
+        # 判断 UV 类型
+        is_face_varying = (n_uvs == n_faces * 3)
+        is_per_vertex = (n_uvs == n_verts)
+        
+        if not is_face_varying and not is_per_vertex:
+            # 尝试 reshape，可能是展平的 face-varying
+            if n_uvs % 3 == 0 and n_uvs // 3 == n_faces:
+                uv = uv.reshape(-1, 3, 2)
+                is_face_varying = True
+            else:
+                _emit_visible_log("UV/Vertex count mismatch: UV=%d, Vert=%d, Face=%d",n_uvs, n_verts, n_faces)
+                return
+        
+        img = np.full((size, size, 3), 255, dtype=np.uint8)
+        
+        def draw_line(x0, y0, x1, y1):
+            # ... 保持原有的 Bresenham 实现 ...
+            dx = abs(x1 - x0)
+            sx = 1 if x0 < x1 else -1
+            dy = -abs(y1 - y0)
+            sy = 1 if y0 < y1 else -1
+            err = dx + dy
+            while True:
+                if 0 <= x0 < size and 0 <= y0 < size:
+                    img[y0, x0] = (0, 0, 0)
+                if x0 == x1 and y0 == y1:
+                    break
+                e2 = 2 * err
+                if e2 >= dy:
+                    err += dy
+                    x0 += sx
+                if e2 <= dx:
+                    err += dx
+                    y0 += sy
+        
+        # 处理 Face-Varying UV (每个三角形的三个角独立UV)
+        if is_face_varying:
+            _emit_visible_log("Face-Varying UV processing...")
+            uv_reshaped = uv.reshape(-1, 3, 2) if uv.ndim == 2 else uv
+            for face_idx, (face, face_uv) in enumerate(zip(faces, uv_reshaped)):
+                # face: [v0, v1, v2], face_uv: [[u0,v0], [u1,v1], [u2,v2]]
+                for i in range(3):
+                    j = (i + 1) % 3
+                    u0, v0 = face_uv[i]
+                    u1, v1 = face_uv[j]
+                    
+                    x0 = int(max(0, min(size - 1, round(u0 * (size - 1)))))
+                    y0 = int(max(0, min(size - 1, round((1.0 - v0) * (size - 1)))))
+                    x1 = int(max(0, min(size - 1, round(u1 * (size - 1)))))
+                    y1 = int(max(0, min(size - 1, round((1.0 - v1) * (size - 1)))))
+                    draw_line(x0, y0, x1, y1)
+        else:
+            # 原有的 Per-Vertex UV 处理逻辑
+            _emit_visible_log("Per-Vertex UV processing...")
+            for face in faces:
+                n = len(face)
+                for i in range(n):
+                    a = int(face[i])
+                    b = int(face[(i + 1) % n])
+                    if a < 0 or b < 0 or a >= len(uv) or b >= len(uv):
+                        continue
+                    u0, v0 = float(uv[a, 0]), float(uv[a, 1])
+                    u1, v1 = float(uv[b, 0]), float(uv[b, 1])
+                    x0 = int(max(0, min(size - 1, round(u0 * (size - 1)))))
+                    y0 = int(max(0, min(size - 1, round((1.0 - v0) * (size - 1)))))
+                    x1 = int(max(0, min(size - 1, round(u1 * (size - 1)))))
+                    y1 = int(max(0, min(size - 1, round((1.0 - v1) * (size - 1)))))
+                    draw_line(x0, y0, x1, y1)
+
+        with open(out_path, "wb") as f:
+            f.write(f"P6\n{size} {size}\n255\n".encode("ascii"))
+            f.write(img.tobytes())
+        _emit_visible_log("Saved UV PPM debug (fixed): %s", out_path)
+    except Exception as e:
+        _emit_visible_log("Failed to save UV PPM debug: %s", e)
+
+def _save_uv_ppm_debug(mesh: trimesh.Trimesh, out_path: str, size: int = 1024) -> None:
+    """
+    Save UV wireframe debug image as PPM.
+    """
+    try:
+        if (
+            not hasattr(mesh, "visual")
+            or mesh.visual is None
+            or not hasattr(mesh.visual, "uv")
+            or mesh.visual.uv is None
+            or len(mesh.visual.uv) == 0
+            or not hasattr(mesh, "faces")
+            or mesh.faces is None
+            or len(mesh.faces) == 0
+        ):
+            _emit_visible_log("Skip UV PPM debug (missing uv/faces): %s", out_path)
+            return
+
+        uv = np.asarray(mesh.visual.uv, dtype=np.float64)
+        faces = np.asarray(mesh.faces)
+        img = np.full((size, size, 3), 255, dtype=np.uint8)
+
+        def draw_line(x0, y0, x1, y1):
+            dx = abs(x1 - x0)
+            sx = 1 if x0 < x1 else -1
+            dy = -abs(y1 - y0)
+            sy = 1 if y0 < y1 else -1
+            err = dx + dy
+            while True:
+                if 0 <= x0 < size and 0 <= y0 < size:
+                    img[y0, x0] = (0, 0, 0)
+                if x0 == x1 and y0 == y1:
+                    break
+                e2 = 2 * err
+                if e2 >= dy:
+                    err += dy
+                    x0 += sx
+                if e2 <= dx:
+                    err += dx
+                    y0 += sy
+
+        for face in faces:
+            n = len(face)
+            for i in range(n):
+                a = int(face[i])
+                b = int(face[(i + 1) % n])
+                if a < 0 or b < 0 or a >= len(uv) or b >= len(uv):
+                    continue
+                u0, v0 = float(uv[a, 0]), float(uv[a, 1])
+                u1, v1 = float(uv[b, 0]), float(uv[b, 1])
+                x0 = int(max(0, min(size - 1, round(u0 * (size - 1)))))
+                y0 = int(max(0, min(size - 1, round((1.0 - v0) * (size - 1)))))
+                x1 = int(max(0, min(size - 1, round(u1 * (size - 1)))))
+                y1 = int(max(0, min(size - 1, round((1.0 - v1) * (size - 1)))))
+                draw_line(x0, y0, x1, y1)
+
+        with open(out_path, "wb") as f:
+            f.write(f"P6\n{size} {size}\n255\n".encode("ascii"))
+            f.write(img.tobytes())
+        _emit_visible_log("Saved UV PPM debug: %s", out_path)
+    except Exception as e:
+        _emit_visible_log("Failed to save UV PPM debug: %s", e)
+
+
+def _save_obj_uv_ppm_debug(obj_path: str, out_path: str, size: int = 1024) -> None:
+    """
+    Save OBJ UV wireframe using native vt/f indices (face-corner UV mapping).
+    This is more accurate than vertex-index-based UV debug for seam-heavy meshes.
+    """
+    try:
+        vt_list = []
+        face_vt_indices = []
+        with open(obj_path, "r", encoding="utf-8", errors="ignore") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("vt "):
+                    parts = line.split()
+                    if len(parts) >= 3:
+                        vt_list.append((float(parts[1]), float(parts[2])))
+                elif line.startswith("f "):
+                    tokens = line.split()[1:]
+                    poly_vt = []
+                    for t in tokens:
+                        # OBJ face token supports: v, v/vt, v//vn, v/vt/vn
+                        subs = t.split("/")
+                        if len(subs) >= 2 and subs[1] != "":
+                            vt_idx = int(subs[1])
+                            # OBJ indices are 1-based; negative means relative to tail
+                            if vt_idx < 0:
+                                vt_idx = len(vt_list) + vt_idx + 1
+                            poly_vt.append(vt_idx - 1)
+                    if len(poly_vt) >= 2:
+                        face_vt_indices.append(poly_vt)
+
+        if not vt_list or not face_vt_indices:
+            _emit_visible_log("Skip OBJ UV PPM debug (missing vt/f-vt): %s", out_path)
+            return
+
+        uv = np.asarray(vt_list, dtype=np.float64)
+        img = np.full((size, size, 3), 255, dtype=np.uint8)
+
+        def draw_line(x0, y0, x1, y1):
+            dx = abs(x1 - x0)
+            sx = 1 if x0 < x1 else -1
+            dy = -abs(y1 - y0)
+            sy = 1 if y0 < y1 else -1
+            err = dx + dy
+            while True:
+                if 0 <= x0 < size and 0 <= y0 < size:
+                    img[y0, x0] = (0, 0, 0)
+                if x0 == x1 and y0 == y1:
+                    break
+                e2 = 2 * err
+                if e2 >= dy:
+                    err += dy
+                    x0 += sx
+                if e2 <= dx:
+                    err += dx
+                    y0 += sy
+
+        for poly in face_vt_indices:
+            n = len(poly)
+            for i in range(n):
+                a = poly[i]
+                b = poly[(i + 1) % n]
+                if a < 0 or b < 0 or a >= len(uv) or b >= len(uv):
+                    continue
+                u0, v0 = float(uv[a, 0]), float(uv[a, 1])
+                u1, v1 = float(uv[b, 0]), float(uv[b, 1])
+                x0 = int(max(0, min(size - 1, round(u0 * (size - 1)))))
+                y0 = int(max(0, min(size - 1, round((1.0 - v0) * (size - 1)))))
+                x1 = int(max(0, min(size - 1, round(u1 * (size - 1)))))
+                y1 = int(max(0, min(size - 1, round((1.0 - v1) * (size - 1)))))
+                draw_line(x0, y0, x1, y1)
+
+        with open(out_path, "wb") as f:
+            f.write(f"P6\n{size} {size}\n255\n".encode("ascii"))
+            f.write(img.tobytes())
+        _emit_visible_log("Saved OBJ-native UV PPM debug: %s", out_path)
+    except Exception as e:
+        _emit_visible_log("Failed to save OBJ-native UV PPM debug: %s", e)
+
 def load_fbx_with_blender(file_path: str) -> Tuple[Optional[trimesh.Trimesh], str]:
     """
     FBX loading is no longer supported via Blender.
@@ -84,7 +328,14 @@ def load_mesh_file(file_path: str) -> Tuple[Optional[trimesh.Trimesh], str]:
         # Use process=False and maintain_order=True to preserve mesh.visual (textures/materials)
         loaded = trimesh.load(file_path, process=False, maintain_order=True)
 
-        log.info(f"Loaded type: {type(loaded).__name__}")
+        # log.info(f"Loaded type: {type(loaded).__name__}")
+        # _emit_visible_log("Loaded file: %s", file_path)
+        # #if ext == ".obj":
+        # obj_uv_ppm_path = os.path.splitext(file_path)[0] + "_uv_loaded_obj_native.ppm"
+        # _save_obj_uv_ppm_debug(file_path, obj_uv_ppm_path)
+        # #if isinstance(loaded, trimesh.Trimesh):
+        # uv_ppm_path = os.path.splitext(file_path)[0] + "_uv_loaded_trimesh.ppm"
+        # _save_uv_ppm_debug_varying(loaded, uv_ppm_path)
 
         # Debug: Check visual data immediately after load
         if isinstance(loaded, trimesh.Scene):
@@ -172,6 +423,8 @@ def load_mesh_file(file_path: str) -> Tuple[Optional[trimesh.Trimesh], str]:
         mesh.metadata['file_path'] = file_path
         mesh.metadata['file_name'] = os.path.basename(file_path)
         mesh.metadata['file_format'] = os.path.splitext(file_path)[1].lower()
+        #uv_ppm_path = os.path.splitext(file_path)[0] + "_uv_loaded_1.ppm"
+        #_save_uv_ppm_debug(mesh, uv_ppm_path)
 
         log.info(f"Successfully loaded: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces")
         return mesh, ""
@@ -264,7 +517,9 @@ class UniRigLoadMesh:
     """
 
     # Supported mesh extensions for file browser
-    SUPPORTED_EXTENSIONS = ['.obj', '.ply', '.stl', '.off', '.gltf', '.glb', '.fbx', '.dae', '.3ds', '.vtp']
+    #SUPPORTED_EXTENSIONS = ['.obj', '.ply', '.stl', '.off', '.gltf', '.glb', '.fbx', '.dae', '.3ds', '.vtp']
+    SUPPORTED_EXTENSIONS = ['.obj']
+
 
     @classmethod
     def INPUT_TYPES(cls):
