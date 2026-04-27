@@ -12,6 +12,8 @@ from typing import Tuple, Optional
 import logging
 
 log = logging.getLogger("unirig")
+_MESH_IO_ROUTE_REGISTERED = False
+_MESH_IO_ROUTE_RETRY_LOGGED = False
 
 try:
     import igl
@@ -199,43 +201,67 @@ def _save_uv_ppm_debug(mesh: trimesh.Trimesh, out_path: str, size: int = 1024) -
         _emit_visible_log("Failed to save UV PPM debug: %s", e)
 
 
-def _save_obj_uv_ppm_debug(obj_path: str, out_path: str, size: int = 1024) -> None:
+def _save_obj_uv_ppm_debug(obj_path: str = "", out_path: str = "", size: int = 1024, mesh_data=None) -> None:
     """
     Save OBJ UV wireframe using native vt/f indices (face-corner UV mapping).
     This is more accurate than vertex-index-based UV debug for seam-heavy meshes.
     """
     try:
-        vt_list = []
-        face_vt_indices = []
-        with open(obj_path, "r", encoding="utf-8", errors="ignore") as f:
-            for raw in f:
-                line = raw.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if line.startswith("vt "):
-                    parts = line.split()
-                    if len(parts) >= 3:
-                        vt_list.append((float(parts[1]), float(parts[2])))
-                elif line.startswith("f "):
-                    tokens = line.split()[1:]
-                    poly_vt = []
-                    for t in tokens:
-                        # OBJ face token supports: v, v/vt, v//vn, v/vt/vn
-                        subs = t.split("/")
-                        if len(subs) >= 2 and subs[1] != "":
-                            vt_idx = int(subs[1])
-                            # OBJ indices are 1-based; negative means relative to tail
-                            if vt_idx < 0:
-                                vt_idx = len(vt_list) + vt_idx + 1
-                            poly_vt.append(vt_idx - 1)
-                    if len(poly_vt) >= 2:
-                        face_vt_indices.append(poly_vt)
+        uv = None
+        face_vt_indices = None
 
-        if not vt_list or not face_vt_indices:
-            _emit_visible_log("Skip OBJ UV PPM debug (missing vt/f-vt): %s", out_path)
+        # Path 1: from mesh_data payload
+        if mesh_data is not None:
+            if isinstance(mesh_data, dict) and "uv" in mesh_data and "face_vt_indices" in mesh_data:
+                uv = np.asarray(mesh_data["uv"], dtype=np.float64)
+                face_vt_indices = mesh_data["face_vt_indices"]
+            elif hasattr(mesh_data, "visual") and hasattr(mesh_data, "faces"):
+                if (
+                    getattr(mesh_data, "visual", None) is not None
+                    and getattr(mesh_data.visual, "uv", None) is not None
+                    and len(mesh_data.visual.uv) > 0
+                    and getattr(mesh_data, "faces", None) is not None
+                    and len(mesh_data.faces) > 0
+                ):
+                    uv = np.asarray(mesh_data.visual.uv, dtype=np.float64)
+                    face_vt_indices = [list(map(int, face)) for face in np.asarray(mesh_data.faces)]
+
+        # Path 2: from OBJ file (legacy behavior)
+        if uv is None or face_vt_indices is None:
+            vt_list = []
+            face_vt_indices = []
+            if not obj_path or not os.path.isfile(obj_path):
+                _emit_visible_log("Skip OBJ UV PPM debug (invalid obj_path and mesh_data): %s", out_path)
+                return
+            with open(obj_path, "r", encoding="utf-8", errors="ignore") as f:
+                for raw in f:
+                    line = raw.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if line.startswith("vt "):
+                        parts = line.split()
+                        if len(parts) >= 3:
+                            vt_list.append((float(parts[1]), float(parts[2])))
+                    elif line.startswith("f "):
+                        tokens = line.split()[1:]
+                        poly_vt = []
+                        for t in tokens:
+                            # OBJ face token supports: v, v/vt, v//vn, v/vt/vn
+                            subs = t.split("/")
+                            if len(subs) >= 2 and subs[1] != "":
+                                vt_idx = int(subs[1])
+                                # OBJ indices are 1-based; negative means relative to tail
+                                if vt_idx < 0:
+                                    vt_idx = len(vt_list) + vt_idx + 1
+                                poly_vt.append(vt_idx - 1)
+                        if len(poly_vt) >= 2:
+                            face_vt_indices.append(poly_vt)
+            uv = np.asarray(vt_list, dtype=np.float64)
+
+        if uv is None or len(uv) == 0 or face_vt_indices is None or len(face_vt_indices) == 0:
+            _emit_visible_log("Skip OBJ UV PPM debug (missing uv/faces): %s", out_path)
             return
 
-        uv = np.asarray(vt_list, dtype=np.float64)
         img = np.full((size, size, 3), 255, dtype=np.uint8)
 
         def draw_line(x0, y0, x1, y1):
@@ -281,19 +307,45 @@ def _save_obj_uv_ppm_debug(obj_path: str, out_path: str, size: int = 1024) -> No
 
 def load_fbx_with_blender(file_path: str) -> Tuple[Optional[trimesh.Trimesh], str]:
     """
-    FBX loading is no longer supported via Blender.
+    Load FBX by converting it to GLB first, then loading with trimesh.
 
     Args:
         file_path: Path to FBX file
 
     Returns:
-        Tuple of (None, error_message)
+        Tuple of (mesh, error_message)
     """
-    return None, (
-        "FBX file format is not directly supported.\n\n"
-        "Please convert your FBX to GLB/OBJ format using Blender or other software,\n"
-        "then load the converted file."
-    )
+    temp_glb_path = None
+    try:
+        # Import lazily to avoid module-level circular dependency.
+        try:
+            from .mia_inference import _export_mia_glb_direct
+        except ImportError:
+            from mia_inference import _export_mia_glb_direct
+
+        with tempfile.NamedTemporaryFile(suffix=".glb", delete=False) as tmp:
+            temp_glb_path = tmp.name
+
+        _emit_visible_log("Converting FBX to GLB for loading: %s", file_path)
+        _export_mia_glb_direct(file_path, temp_glb_path)
+        _emit_visible_log("Converted FBX->GLB: %s", temp_glb_path)
+
+        # Reuse the standard mesh loading pipeline for GLB.
+        mesh, err = load_mesh_file(temp_glb_path)
+        if mesh is None:
+            return None, f"FBX converted to GLB but load failed: {err}"
+        return mesh, ""
+
+    except Exception as e:
+        log.exception("Failed to load FBX via Blender conversion: %s", e)
+        return None, f"Failed to convert/load FBX: {e}"
+    finally:
+        if temp_glb_path and os.path.exists(temp_glb_path):
+            try:
+                #os.remove(temp_glb_path)
+                pass
+            except Exception as cleanup_error:
+                log.warning("Failed to remove temp GLB %s: %s", temp_glb_path, cleanup_error)
 
 
 def load_mesh_file(file_path: str) -> Tuple[Optional[trimesh.Trimesh], str]:
@@ -332,10 +384,9 @@ def load_mesh_file(file_path: str) -> Tuple[Optional[trimesh.Trimesh], str]:
         # _emit_visible_log("Loaded file: %s", file_path)
         # #if ext == ".obj":
         # obj_uv_ppm_path = os.path.splitext(file_path)[0] + "_uv_loaded_obj_native.ppm"
-        # _save_obj_uv_ppm_debug(file_path, obj_uv_ppm_path)
-        # #if isinstance(loaded, trimesh.Trimesh):
+        # _save_obj_uv_ppm_debug(obj_path=file_path, out_path=obj_uv_ppm_path)
         # uv_ppm_path = os.path.splitext(file_path)[0] + "_uv_loaded_trimesh.ppm"
-        # _save_uv_ppm_debug_varying(loaded, uv_ppm_path)
+        # _save_obj_uv_ppm_debug(mesh_data=loaded, out_path=uv_ppm_path)
 
         # Debug: Check visual data immediately after load
         if isinstance(loaded, trimesh.Scene):
@@ -518,13 +569,21 @@ class UniRigLoadMesh:
 
     # Supported mesh extensions for file browser
     #SUPPORTED_EXTENSIONS = ['.obj', '.ply', '.stl', '.off', '.gltf', '.glb', '.fbx', '.dae', '.3ds', '.vtp']
-    SUPPORTED_EXTENSIONS = ['.obj']
+    SUPPORTED_EXTENSIONS = ['.obj','.gltf', '.glb', '.fbx']
+    _last_source_folder = "input"
 
 
     @classmethod
     def INPUT_TYPES(cls):
-        # Get list of available mesh files from input folder (default)
-        mesh_files = cls.get_mesh_files_from_input()
+        # Build file list based on current source folder selection snapshot.
+        selected_source = getattr(cls, "_last_source_folder", "input")
+        input_files = cls.get_mesh_files_from_input()
+        output_files = cls.get_mesh_files_from_output()
+        if selected_source == "output":
+            mesh_files = sorted(set(output_files))
+        else:
+            mesh_files = sorted(set(input_files))
+
 
         # If no files found, provide a default message
         if not mesh_files:
@@ -533,13 +592,19 @@ class UniRigLoadMesh:
         return {
             "required": {
                 "source_folder": (["input", "output"], {
-                    "default": "input",
+                    "default": selected_source if selected_source in ("input", "output") else "input",
                     "tooltip": "Source folder to load mesh from (ComfyUI input or output directory)"
                 }),
                 "file_path": (mesh_files, {
-                    "tooltip": "Mesh file to load. Refresh the node after changing source_folder."
+                    "tooltip": "Mesh file to load. Supports upload from local machine.",
+                    "file_upload": True,
                 }),
-            },
+                "obj_path": ("STRING", {
+                    "default": "",
+                    "multiline": False,
+                    "tooltip": "Upload-filled path override (input/... or output/... or absolute). If empty, uses file_path."
+                })
+            }
         }
 
     RETURN_TYPES = ("TRIMESH",)
@@ -587,29 +652,37 @@ class UniRigLoadMesh:
         return sorted(mesh_files)
 
     @classmethod
-    def IS_CHANGED(cls, source_folder, file_path):
+    def IS_CHANGED(cls, source_folder, file_path, obj_path=""):
         """Force re-execution when file changes."""
-        base_folder = COMFYUI_INPUT_FOLDER if source_folder == "input" else COMFYUI_OUTPUT_FOLDER
+        if obj_path and obj_path.strip():
+            obj_path = obj_path.strip().strip('"')
+            if obj_path.startswith("input/") and COMFYUI_INPUT_FOLDER is not None:
+                p = os.path.join(COMFYUI_INPUT_FOLDER, obj_path[len("input/"):])
+                if os.path.exists(p):
+                    return os.path.getmtime(p)
+            if obj_path.startswith("output/") and COMFYUI_OUTPUT_FOLDER is not None:
+                p = os.path.join(COMFYUI_OUTPUT_FOLDER, obj_path[len("output/"):])
+                if os.path.exists(p):
+                    return os.path.getmtime(p)
+            if os.path.exists(obj_path):
+                return os.path.getmtime(obj_path)
+            return f"uploaded:{obj_path}"
 
-        if base_folder is not None:
-            if source_folder == "input":
-                # Check in input/3d first, then input root
-                input_3d_path = os.path.join(base_folder, "3d", file_path)
-                input_path = os.path.join(base_folder, file_path)
+        candidate_paths = []
+        if COMFYUI_INPUT_FOLDER is not None:
+            candidate_paths.append(os.path.join(COMFYUI_INPUT_FOLDER, "3d", file_path))
+            candidate_paths.append(os.path.join(COMFYUI_INPUT_FOLDER, file_path))
+        if COMFYUI_OUTPUT_FOLDER is not None:
+            candidate_paths.append(os.path.join(COMFYUI_OUTPUT_FOLDER, file_path))
+        candidate_paths.append(file_path)
 
-                if os.path.exists(input_3d_path):
-                    return os.path.getmtime(input_3d_path)
-                elif os.path.exists(input_path):
-                    return os.path.getmtime(input_path)
-            else:
-                # Check in output folder
-                full_path = os.path.join(base_folder, file_path)
-                if os.path.exists(full_path):
-                    return os.path.getmtime(full_path)
+        for p in candidate_paths:
+            if p and os.path.exists(p):
+                return os.path.getmtime(p)
 
         return f"{source_folder}:{file_path}"
 
-    def load_mesh(self, source_folder, file_path):
+    def load_mesh(self, source_folder, file_path, obj_path=""):
         """
         Load mesh from file.
 
@@ -622,6 +695,28 @@ class UniRigLoadMesh:
         Returns:
             tuple: (trimesh.Trimesh,)
         """
+        # Persist user's latest source selection so next UI refresh can match file candidates.
+        self.__class__._last_source_folder = source_folder if source_folder in ("input", "output") else "input"
+
+        if obj_path and obj_path.strip():
+            obj_path = obj_path.strip().strip('"')
+            full_path = obj_path
+            if obj_path.startswith("input/") and COMFYUI_INPUT_FOLDER is not None:
+                full_path = os.path.join(COMFYUI_INPUT_FOLDER, obj_path[len("input/"):])
+            elif obj_path.startswith("output/") and COMFYUI_OUTPUT_FOLDER is not None:
+                full_path = os.path.join(COMFYUI_OUTPUT_FOLDER, obj_path[len("output/"):])
+
+            if not full_path.lower().endswith(".obj"):
+                raise ValueError("obj_path must point to an .obj file")
+            if not os.path.exists(full_path):
+                raise ValueError(f"Uploaded OBJ not found: {obj_path}")
+            _emit_visible_log("Using obj_path override: %s", full_path)
+            loaded_mesh, error = load_mesh_file(full_path)
+            if loaded_mesh is None:
+                raise ValueError(f"Failed to load OBJ from obj_path: {error}")
+            log.info(f"Loaded: {len(loaded_mesh.vertices)} vertices, {len(loaded_mesh.faces)} faces")
+            return (loaded_mesh,)
+
         if not file_path or file_path.strip() == "":
             raise ValueError("File path cannot be empty")
 
@@ -652,7 +747,26 @@ class UniRigLoadMesh:
                 full_path = output_path
                 log.info("Found mesh in output folder: %s", file_path)
 
-        # If not found in source folder, try as absolute path
+        # If not found in selected source, try the other ComfyUI folder too
+        if full_path is None:
+            if source_folder != "input" and COMFYUI_INPUT_FOLDER is not None:
+                input_3d_path = os.path.join(COMFYUI_INPUT_FOLDER, "3d", file_path)
+                input_path = os.path.join(COMFYUI_INPUT_FOLDER, file_path)
+                searched_paths.extend([input_3d_path, input_path])
+                if os.path.exists(input_3d_path):
+                    full_path = input_3d_path
+                    log.info("Found mesh in input/3d folder (fallback): %s", file_path)
+                elif os.path.exists(input_path):
+                    full_path = input_path
+                    log.info("Found mesh in input folder (fallback): %s", file_path)
+            elif source_folder != "output" and COMFYUI_OUTPUT_FOLDER is not None:
+                output_path = os.path.join(COMFYUI_OUTPUT_FOLDER, file_path)
+                searched_paths.append(output_path)
+                if os.path.exists(output_path):
+                    full_path = output_path
+                    log.info("Found mesh in output folder (fallback): %s", file_path)
+
+        # If still not found, try as absolute path
         if full_path is None:
             searched_paths.append(file_path)
             if os.path.exists(file_path):
@@ -675,6 +789,44 @@ class UniRigLoadMesh:
 
         return (loaded_mesh,)
 
+
+def on_custom_loaded(app):
+    """Register mesh-files API routes after custom nodes are loaded."""
+    global _MESH_IO_ROUTE_REGISTERED
+    if _MESH_IO_ROUTE_REGISTERED:
+        return
+
+    try:
+        from aiohttp import web
+    except Exception as e:
+        _emit_visible_log("Skip mesh route registration (aiohttp unavailable): %s", e)
+        return
+
+    async def _mesh_files_handler(request):
+        source_folder = request.rel_url.query.get("source_folder", "input")
+        if source_folder == "output":
+            files = UniRigLoadMesh.get_mesh_files_from_output()
+        else:
+            files = UniRigLoadMesh.get_mesh_files_from_input()
+        if not files:
+            files = ["No mesh files found"]
+        return web.json_response({"files": files})
+
+    try:
+        routes = getattr(app, "routes", None)
+        if routes is not None and hasattr(routes, "get"):
+            routes.get("/unirig/mesh-files")(_mesh_files_handler)
+            #routes.get("/api/unirig/mesh-files")(_mesh_files_handler)
+        elif hasattr(app, "router") and hasattr(app.router, "add_get"):
+            app.router.add_get("/unirig/mesh-files", _mesh_files_handler)
+            #app.router.add_get("/api/unirig/mesh-files", _mesh_files_handler)
+        else:
+            _emit_visible_log("Skip mesh route registration: unsupported app type %s", type(app).__name__)
+            return
+        _MESH_IO_ROUTE_REGISTERED = True
+        _emit_visible_log("Registered mesh-file routes via on_custom_loaded")
+    except Exception as e:
+        log.warning("Mesh route registration failed: %s", e)
 
 class UniRigSaveMesh:
     """

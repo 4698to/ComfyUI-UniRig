@@ -9,7 +9,7 @@ setup_link(_PKG / "ops_sparse.py",       "ops_sparse.py")
 setup_link(_PKG / "attention_sparse.py", "attention_sparse.py")
 del pathlib, comfy_sparse_attn, setup_link, _PKG
 
-from .mesh_io import UniRigLoadMesh, UniRigSaveMesh
+from .mesh_io import UniRigLoadMesh, UniRigSaveMesh, on_custom_loaded as mesh_io_on_custom_loaded
 from .load_model import UniRigLoadModel, MIALoadModel
 from .auto_rig import UniRigAutoRig
 from .skeleton_extraction import UniRigExtractSkeletonNew
@@ -63,3 +63,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "UniRigCompareSkeletons": "UniRig: Compare Skeletons",
     "UniRigOrientationCheck": "UniRig: Orientation Check",
 }
+
+
+def on_custom_loaded(app):
+    mesh_io_on_custom_loaded(app)

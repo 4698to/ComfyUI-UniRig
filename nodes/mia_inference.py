@@ -487,6 +487,117 @@ def _match_input_scale(
     return joints, joints_tail
 
 
+def _export_mia_glb_direct(
+    fbx_path: str,
+    glb_path: Optional[str] = None,
+) -> str:
+    """
+    Convert an input FBX file to GLB using bpy directly.
+    
+    Args:
+        fbx_path: Input FBX file path.
+        glb_path: Optional output GLB file path. If None, uses same stem as FBX.
+
+    Returns:
+        Output GLB file path.
+    """
+    import bpy  # Lazy import - only imported here AFTER torch_cluster loaded
+
+    if not fbx_path:
+        raise ValueError("fbx_path is required")
+
+    src_fbx = os.path.abspath(fbx_path)
+    if not os.path.isfile(src_fbx):
+        raise FileNotFoundError(f"Input FBX not found: {src_fbx}")
+    if not src_fbx.lower().endswith(".fbx"):
+        raise ValueError(f"Input file must be .fbx: {src_fbx}")
+
+    out_glb = os.path.abspath(glb_path) if glb_path else os.path.splitext(src_fbx)[0] + ".glb"
+    os.makedirs(os.path.dirname(out_glb), exist_ok=True)
+
+    log.info("Converting FBX to GLB via bpy: %s -> %s", src_fbx, out_glb)
+
+    # Use a clean scene to avoid exporting stale objects.
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    bpy.ops.import_scene.fbx(filepath=src_fbx)
+    # Export using centimeter scene units for consistent scale in downstream tools.
+    scene_units = bpy.context.scene.unit_settings
+    scene_units.system = 'METRIC'
+    scene_units.scale_length = 0.01
+
+    # Keep mesh objects only, remove all non-mesh objects from the scene.
+    scene_objs = list(bpy.context.scene.objects)
+    mesh_objs = [obj for obj in scene_objs if obj.type == "MESH"]
+    non_mesh_objs = [obj for obj in scene_objs if obj.type != "MESH"]
+    
+
+    for obj in non_mesh_objs:
+        bpy.data.objects.remove(obj, do_unlink=True)
+
+    if not mesh_objs:
+        raise RuntimeError(f"No mesh object found after FBX import: {src_fbx}")
+
+    # Keep object mode for export pipeline; mode switching can fail in headless context.
+    if bpy.context.mode != 'OBJECT':
+        try:
+            bpy.ops.object.mode_set(mode='OBJECT')
+        except Exception:
+            _emit_visible_log("Skip mode switch, current mode=%s", bpy.context.mode)
+
+    # Force mesh objects to world scale=(1,1,1) without relying on bpy.ops context.
+    from mathutils import Matrix
+    for obj in mesh_objs:
+        # Remove object animation data (Action/NLA/Drivers) to avoid transform overrides.
+        if obj.animation_data is not None:
+            obj.animation_data_clear()
+        
+        loc, rot, scale = obj.matrix_world.decompose()
+        obj.matrix_world = Matrix.LocRotScale(loc, rot, (1.0, 1.0, 1.0))
+        _emit_visible_log("Object %s scale: %s", obj.name, obj.scale)
+        obj.data.update()
+    
+    bpy.context.view_layer.update()
+   
+    # Log texture file names found in imported FBX materials/images.
+    texture_names = set()
+    for img in bpy.data.images:
+        # Keep only image entries that actually resolve to a source path.
+        img_path = ""
+        try:
+            img_path = bpy.path.abspath(img.filepath_raw or img.filepath or "")
+        except Exception:
+            img_path = img.filepath_raw or img.filepath or ""
+        if img_path:
+            texture_names.add(os.path.basename(img_path))
+        elif img.name:
+            texture_names.add(img.name)
+
+    if texture_names:
+        sorted_names = sorted(texture_names)
+        _emit_visible_log("FBX textures (%d): %s", len(sorted_names), ", ".join(sorted_names))
+    else:
+        _emit_visible_log("FBX textures: none found in imported scene")
+
+
+    bpy.ops.export_scene.gltf(
+        filepath=out_glb,
+        export_format='GLB',
+        use_selection=False,
+        export_texcoords=True,
+        export_normals=True,
+        export_materials='EXPORT',
+        export_image_format='AUTO',
+    )
+
+    # out_blend = os.path.splitext(out_glb)[0] + ".blend"
+    # bpy.ops.wm.save_as_mainfile(filepath=out_blend, copy=True)
+    # _emit_visible_log("Saved blend file: %s", out_blend)
+
+    if not os.path.isfile(out_glb):
+        raise RuntimeError(f"FBX->GLB conversion finished but no output file found: {out_glb}")
+
+    log.info("Converted FBX to GLB: %s", out_glb)
+    return out_glb
 def _export_mia_fbx_direct(
     data: Dict[str, Any],
     output_path: str,
