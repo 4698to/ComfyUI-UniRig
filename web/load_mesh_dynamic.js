@@ -12,10 +12,14 @@ app.registerExtension({
             const ret = origOnNodeCreated ? origOnNodeCreated.apply(this, arguments) : undefined;
 
             const sourceWidget = this.widgets?.find((w) => w.name === "source_folder");
-            const fileWidget = this.widgets?.find((w) => w.name === "file_path");
-            if (!sourceWidget || !fileWidget) {
+            const filePathWidget = this.widgets?.find((w) => w.name === "file_path");
+            if (!sourceWidget || !filePathWidget) {
                 return ret;
             }
+
+            let selectorWidget =
+                this.widgets?.find((w) => w.name === "mesh_selector") ||
+                this.addWidget("combo", "mesh_selector", "", () => {}, { values: ["No mesh files found"] });
 
             const refreshFileOptions = async () => {
                 const source = sourceWidget.value || "input";
@@ -27,16 +31,29 @@ app.registerExtension({
                     const data = await resp.json();
                     const files = Array.isArray(data?.files) && data.files.length > 0 ? data.files : ["No mesh files found"];
 
-                    fileWidget.options = fileWidget.options || {};
-                    fileWidget.options.values = files;
+                    selectorWidget.options = selectorWidget.options || {};
+                    selectorWidget.options.values = files;
 
-                    if (!files.includes(fileWidget.value)) {
-                        fileWidget.value = files[0];
+                    if (!files.includes(selectorWidget.value)) {
+                        selectorWidget.value = files[0];
+                    }
+                    if (!filePathWidget.value || !files.includes(filePathWidget.value)) {
+                        filePathWidget.value = selectorWidget.value;
                     }
 
                     this.setDirtyCanvas(true, true);
                 } catch (err) {
                     console.warn("[UniRig] failed to refresh mesh files:", err);
+                }
+            };
+
+            const origSelectorCallback = selectorWidget.callback;
+            selectorWidget.callback = (...args) => {
+                if (origSelectorCallback) {
+                    origSelectorCallback.apply(selectorWidget, args);
+                }
+                if (filePathWidget) {
+                    filePathWidget.value = selectorWidget.value || "";
                 }
             };
 

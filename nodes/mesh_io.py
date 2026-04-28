@@ -577,17 +577,6 @@ class UniRigLoadMesh:
     def INPUT_TYPES(cls):
         # Build file list based on current source folder selection snapshot.
         selected_source = getattr(cls, "_last_source_folder", "input")
-        input_files = cls.get_mesh_files_from_input()
-        output_files = cls.get_mesh_files_from_output()
-        if selected_source == "output":
-            mesh_files = sorted(set(output_files))
-        else:
-            mesh_files = sorted(set(input_files))
-
-
-        # If no files found, provide a default message
-        if not mesh_files:
-            mesh_files = ["No mesh files found"]
 
         return {
             "required": {
@@ -595,8 +584,10 @@ class UniRigLoadMesh:
                     "default": selected_source if selected_source in ("input", "output") else "input",
                     "tooltip": "Source folder to load mesh from (ComfyUI input or output directory)"
                 }),
-                "file_path": (mesh_files, {
-                    "tooltip": "Mesh file to load. Supports upload from local machine.",
+                "file_path": ("STRING", {
+                    "default": "",
+                    "multiline": False,
+                    "tooltip": "Mesh file path (supports upload and absolute/relative path).",
                     "file_upload": True,
                 }),
                 "obj_path": ("STRING", {
@@ -647,42 +638,13 @@ class UniRigLoadMesh:
                         # Get relative path from output folder
                         full_path = os.path.join(root, file)
                         rel_path = os.path.relpath(full_path, COMFYUI_OUTPUT_FOLDER)
-                        mesh_files.append(rel_path)
+                        mesh_files.append(rel_path.replace("\\", "/"))
 
         return sorted(mesh_files)
 
-    @classmethod
-    def IS_CHANGED(cls, source_folder, file_path, obj_path=""):
-        """Force re-execution when file changes."""
-        if obj_path and obj_path.strip():
-            obj_path = obj_path.strip().strip('"')
-            if obj_path.startswith("input/") and COMFYUI_INPUT_FOLDER is not None:
-                p = os.path.join(COMFYUI_INPUT_FOLDER, obj_path[len("input/"):])
-                if os.path.exists(p):
-                    return os.path.getmtime(p)
-            if obj_path.startswith("output/") and COMFYUI_OUTPUT_FOLDER is not None:
-                p = os.path.join(COMFYUI_OUTPUT_FOLDER, obj_path[len("output/"):])
-                if os.path.exists(p):
-                    return os.path.getmtime(p)
-            if os.path.exists(obj_path):
-                return os.path.getmtime(obj_path)
-            return f"uploaded:{obj_path}"
+   
 
-        candidate_paths = []
-        if COMFYUI_INPUT_FOLDER is not None:
-            candidate_paths.append(os.path.join(COMFYUI_INPUT_FOLDER, "3d", file_path))
-            candidate_paths.append(os.path.join(COMFYUI_INPUT_FOLDER, file_path))
-        if COMFYUI_OUTPUT_FOLDER is not None:
-            candidate_paths.append(os.path.join(COMFYUI_OUTPUT_FOLDER, file_path))
-        candidate_paths.append(file_path)
-
-        for p in candidate_paths:
-            if p and os.path.exists(p):
-                return os.path.getmtime(p)
-
-        return f"{source_folder}:{file_path}"
-
-    def load_mesh(self, source_folder, file_path, obj_path=""):
+    def load_mesh(self, source_folder, file_path="", obj_path=""):
         """
         Load mesh from file.
 
@@ -697,7 +659,6 @@ class UniRigLoadMesh:
         """
         # Persist user's latest source selection so next UI refresh can match file candidates.
         self.__class__._last_source_folder = source_folder if source_folder in ("input", "output") else "input"
-
         if obj_path and obj_path.strip():
             obj_path = obj_path.strip().strip('"')
             full_path = obj_path
@@ -718,7 +679,10 @@ class UniRigLoadMesh:
             return (loaded_mesh,)
 
         if not file_path or file_path.strip() == "":
-            raise ValueError("File path cannot be empty")
+            raise ValueError("file_path is empty")
+        file_path = file_path.strip().strip('"')
+        if not os.path.isabs(file_path):
+            file_path = file_path.replace("\\", "/")
 
         # Try to find the file
         full_path = None
@@ -804,6 +768,7 @@ def on_custom_loaded(app):
 
     async def _mesh_files_handler(request):
         source_folder = request.rel_url.query.get("source_folder", "input")
+        UniRigLoadMesh._last_source_folder = source_folder if source_folder in ("input", "output") else "input"
         if source_folder == "output":
             files = UniRigLoadMesh.get_mesh_files_from_output()
         else:
